@@ -1411,8 +1411,10 @@ class MapSuite
 
   test 'entity identifier becomes the console kind' do
     m = map
-    # 'Enemy' -> :enemy, with no naming from the cart at all.
-    assert_equal [:coin, :enemy, :platform], m.entities.map { |e| e[:kind] }.sort
+    # 'Enemy' -> :enemy, with no naming from the cart at all. Platform and
+    # Block are absent because both declare themselves solid in the map, and a
+    # solid is collision rather than something to spawn.
+    assert_equal [:coin, :enemy], m.entities.map { |e| e[:kind] }.sort
   end
 
   test 'entity position and size come from ldtk' do
@@ -1477,10 +1479,70 @@ class MapSuite
     end
   end
 
+  test 'field_value reads the modern __value key as well as legacy value' do
+    # LDTK renamed the payload key from `value` to `__value`. A loader that
+    # knows only the old spelling loses EVERY field on a modern export, and
+    # loses them silently -- the level still loads, just bare.
+    assert_equal 7, Console::Map.field_value({ '__type' => 'Int', '__value' => 7 })
+    assert_equal true, Console::Map.field_value({ '__type' => 'Bool', '__value' => true })
+    # The old spelling still loads, so 1.x exports do not break.
+    assert_equal 7, Console::Map.field_value({ '__type' => 'Int', 'value' => 7 })
+    # Modern wins if an export somehow carries both.
+    assert_equal 9, Console::Map.field_value({ '__type' => 'Int', '__value' => 9, 'value' => 7 })
+  end
+
+  test 'a modern ldtk export loads its fields and its solid entities' do
+    # End-to-end version of the __value test, and the exact combination that
+    # used to be broken: on a modern export every field read as nil, so a
+    # Solid flag would have been invisible and the entity would have stayed
+    # non-collidable with nothing to indicate why. Built inline through
+    # from_hash rather than committed as a second fixture file.
+    data = {
+      'worlds' => [{
+        'identifier' => 'W', 'iid' => 'w1',
+        'levels' => [{
+          'identifier' => 'Level_0', 'pxWid' => 320, 'pxHei' => 160,
+          'layerInstances' => [{
+            '__type' => 'Entities', '__identifier' => 'Entities', 'iid' => 'l1',
+            'entityInstances' => [
+              {
+                '__identifier' => 'Enemy', 'iid' => 'e1', 'defUid' => 1,
+                'width' => 16, 'height' => 16, 'px' => [64, 64],
+                'fieldInstances' => [
+                  { '__identifier' => 'Health', '__type' => 'Int', '__value' => 9, 'defUid' => 10 },
+                  { '__identifier' => 'Solid', '__type' => 'Bool', '__value' => false, 'defUid' => 11 }
+                ]
+              },
+              {
+                '__identifier' => 'Platform', 'iid' => 'e2', 'defUid' => 3,
+                'width' => 48, 'height' => 8, 'px' => [160, 96],
+                'fieldInstances' => [
+                  { '__identifier' => 'Solid', '__type' => 'Bool', '__value' => true, 'defUid' => 11 }
+                ]
+              }
+            ]
+          }]
+        }]
+      }]
+    }
+
+    m = Console::Map.from_hash data
+
+    # A plain entity keeps its fields...
+    assert_equal 1, m.entities.size
+    assert_equal 9, m.entities_of('Enemy').first[:health]
+    # ...and Solid: false is correctly NOT enough to make it a solid.
+    assert_equal 1, m.solids.size
+    assert_equal 48.0, m.solids.first[:w]
+    assert_equal 56.0, m.solids.first[:y]
+  end
+
   test 'intgrid non-zero cells become solid rects' do
     m = map
-    # The fixture's bottom row is solid across all 20 columns.
-    assert_equal 20, m.solids.size
+    # The fixture's bottom row is solid across all 20 columns. Counted by
+    # position rather than via `solids.size`, because the map also contributes
+    # entity-derived solids and this test is only about the IntGrid layer.
+    assert_equal 20, m.solids.select { |s| s[:y] == 0.0 }.size
     first = m.solids.first
     assert_equal 0.0, first[:x]
     assert_equal 0.0, first[:y]
@@ -1505,16 +1567,85 @@ class MapSuite
     assert_equal false, map.solids.first[:one_way]
   end
 
-  test 'entity-level one_way flag is carried through' do
-    platform = map.entities_of('Platform').first
-    assert_equal true, platform[:one_way]
+  test 'a one_way entity is solid without any cart-side list' do
+    m = map
+    # The fixture's Platform carries OneWay: true and nothing else. A
+    # pass-through platform is still a platform, so it becomes collision on its
+    # own -- plain `load_map 'Level_0.ldtk'`, no solid_entities: option.
+    refute_includes m.entities.map { |e| e[:kind] }, :platform
+    plat = m.solids.find { |s| s[:w] == 48.0 && s[:h] == 8.0 }
+    assert_not_nil plat
+    assert_equal true, plat[:one_way]
+    assert_equal 160.0, plat[:x]
+    assert_equal 56.0, plat[:y] # 160 - 96 - 8, flipped into console space
+  end
+
+  test 'a solid bool field makes an entity solid with no cart-side list' do
+    m = map
+    # Block declares Solid: true and is NOT one-way, so this covers the rule
+    # independently of the one_way path above.
+    refute_includes m.entities.map { |e| e[:kind] }, :block
+    blk = m.solids.find { |s| s[:w] == 32.0 && s[:h] == 16.0 }
+    assert_not_nil blk
+    assert_equal false, blk[:one_way]
+    assert_equal 16.0, blk[:x]
+    assert_equal 48.0, blk[:y] # 160 - 96 - 16
+  end
+
+  test 'entity-derived solids have the same shape as intgrid ones' do
+    # A cart reads `solids` without caring which layer a rect came from.
+    map.solids.each do |s|
+      assert_equal :solid, s[:kind]
+      assert_not_nil s[:one_way]
+    end
+  end
+
+  test 'a body falls onto a solid entity straight out of the map' do
+    m = map
+    plat = m.solids.find { |s| s[:w] == 48.0 && s[:h] == 8.0 }
+    assert_not_nil plat
+    # The whole point of the Platform carrying OneWay: a body dropped from
+    # above it lands on top rather than dropping through to the floor.
+    b = Console::Body.new(x: plat[:x] + 8.0, y: plat[:y] + 60.0,
+                          w: 16.0, h: 16.0, gravity: 0.5)
+    300.times { b.update m.solids }
+    assert b.grounded?
+    assert_equal plat[:y] + plat[:h], b.y # 64.0 -- resting on the surface
+  end
+
+  test 'one_way entity passes from below but a solid one blocks' do
+    m = map
+    plat = m.solids.find { |s| s[:w] == 48.0 && s[:h] == 8.0 }
+    blk  = m.solids.find { |s| s[:w] == 32.0 && s[:h] == 16.0 }
+    # Both bodies start at y=30: clear of the floor at y=16, and below both
+    # rects, so the only thing that can stop them is the entity above. Note
+    # that positive vy is RISING here -- the same sense as `jump`.
+    rising = ->(target) {
+      b = Console::Body.new(x: target[:x] + 8.0, y: 30.0,
+                            w: 16.0, h: 16.0, gravity: 0.0)
+      b.vy = 8.0
+      40.times { b.update m.solids }
+      b
+    }
+
+    # Rising through the one_way Platform: straight past it.
+    through = rising.call plat
+    assert through.y > plat[:y] + plat[:h]
+
+    # Rising into the Solid Block: stopped against its underside.
+    stopped = rising.call blk
+    assert_equal blk[:y], stopped.y + stopped.h
   end
 
   test 'solid_entities option turns entities into solids' do
     plain = map
-    m = map(solid_entities: ['Platform'])
-    refute_includes m.entities_of('Platform').map { |e| e[:kind] }, :platform
-    # The Platform moved out of `entities`, and one extra solid appeared.
+    # Coin declares neither Solid nor OneWay, so the option is the ONLY thing
+    # that can promote it -- which is what makes this a test of the option
+    # rather than a restatement of the two field rules.
+    assert_includes plain.entities.map { |e| e[:kind] }, :coin
+    m = map(solid_entities: ['Coin'])
+    refute_includes m.entities.map { |e| e[:kind] }, :coin
+    # The Coin moved out of `entities`, and one extra solid appeared.
     assert_equal plain.entities.size - 1, m.entities.size
     assert_equal plain.solids.size + 1, m.solids.size
   end
@@ -1537,7 +1668,9 @@ class MapSuite
     m = map
     before = Console.entities.count(:enemy)
     created = m.spawn_all
-    assert_equal 3, created.size
+    # Coin and Enemy only: the two entities that declare themselves solid in
+    # the map are collision, not things to spawn.
+    assert_equal 2, created.size
     assert_equal before + 1, Console.entities.count(:enemy)
     created.each { |e| Console.entities.despawn e }
   end

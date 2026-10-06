@@ -160,6 +160,27 @@
                       "realEditorValues": []
                     }
                   ]
+                },
+                {
+                  "__identifier": "Block",
+                  "iid": "fixture0009",
+                  "defUid": 4,
+                  "width": 32,
+                  "height": 16,
+                  "px": [16, 96],
+                  "__grid": [1, 6],
+                  "__worldX": 16,
+                  "__worldY": 96,
+                  "__tags": [],
+                  "fieldInstances": [
+                    {
+                      "__identifier": "Solid",
+                      "__type": "Bool",
+                      "value": true,
+                      "defUid": 40,
+                      "realEditorValues": []
+                    }
+                  ]
                 }
               ]
             },

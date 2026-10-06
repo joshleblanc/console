@@ -1,7 +1,8 @@
 # Cart: ldtk
 #
 # The LDTK pipeline end to end: load a real .ldtk export, spawn its entities,
-# and run a body against the solids harvested from its IntGrid layer.
+# and run a body against the solids it yields -- those harvested from the
+# IntGrid layer, plus every entity that declares itself solid in the map.
 #
 #   ./run --cart ldtk
 #
@@ -18,6 +19,10 @@ class Ldtk
   JUMP = 9.0
 
   def setup
+    # Deliberately no `solid_entities:` list here. The Platform and Block
+    # entities in Level_0.ldtk carry OneWay: true and Solid: true, so the map
+    # decides they are collision and they arrive in @map.solids on their own --
+    # both landable, neither named in console code.
     @map = load_map LEVEL
     return unless @map
 

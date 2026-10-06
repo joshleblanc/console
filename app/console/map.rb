@@ -96,8 +96,15 @@ module Console
         return { x: field['cx'].to_f, y: field['cy'].to_f }
       end
 
-      return nil unless field.key?('value')
-      field['value']
+      # LDTK renamed the payload key from `value` to `__value`. A loader that
+      # knows only the old spelling loses EVERY field on a modern export, and
+      # loses them silently: a missing key reads as "no value supplied" rather
+      # than as an error, so the level still loads and just comes out bare.
+      # Read the current key first and keep the old one as a fallback so both
+      # generations parse. Point is branched above -- it has neither key.
+      return field['__value'] if field.key?('__value')
+      return field['value'] if field.key?('value')
+      nil
     end
 
     def initialize(data, options = {})
@@ -207,12 +214,36 @@ module Console
       instances.each do |inst|
         next unless inst.is_a?(Hash)
         attrs = entity_attributes inst
-        if @solid_entities.include?(inst['__identifier'].to_s)
-          @solids << solid_from_entity(attrs, inst)
+        if solid_entity? inst, attrs
+          @solids << solid_from_entity(attrs)
         else
           @entities << attrs
         end
       end
+    end
+
+    # Whether an entity is collision rather than a thing to spawn.
+    #
+    # The map gets to decide this, so a cart never has to keep a list of every
+    # entity type in the level that happens to be solid -- a list that silently
+    # rots the moment someone adds a platform in LDTK. Three ways to say it, in
+    # order of explicitness:
+    #
+    #   1. `solid_entities:` names the LDTK identifier outright.
+    #   2. The entity carries a truthy `Solid` bool field.
+    #   3. The entity carries a truthy `OneWay` bool field. A pass-through
+    #      platform is still a platform, so one-way implies solid instead of
+    #      being treated as an unrelated flag.
+    #
+    # (2) and (3) are read off the entity instance, and LDTK bakes an entity
+    # type's field defaults into every placed copy -- so ticking `Solid` once
+    # on the Platform TYPE in the editor marks every Platform in the level,
+    # and there is nothing left to remember on the console side.
+    def solid_entity?(inst, attrs)
+      return true if @solid_entities.include?(inst['__identifier'].to_s)
+      return true if attrs[:solid]
+      return true if attrs[:one_way]
+      false
     end
 
     # LDTK entity -> console entity hash.
@@ -248,12 +279,20 @@ module Console
       attrs
     end
 
-    def solid_from_entity(attrs, inst)
-      s = { x: attrs[:x], y: attrs[:y], w: attrs[:w], h: attrs[:h] }
-      # `one_way` on the entity is the LDTK-native spelling of a pass-through
-      # platform; honour both that and the generic flag.
-      s[:one_way] = attrs[:one_way] ? true : false
-      s
+    def solid_from_entity(attrs)
+      {
+        x: attrs[:x],
+        y: attrs[:y],
+        w: attrs[:w],
+        h: attrs[:h],
+        # `one_way` on the entity is the LDTK-native spelling of a pass-through
+        # platform; honour both that and the generic flag.
+        one_way: attrs[:one_way] ? true : false,
+        # Deliberately the same shape as an IntGrid-derived solid, so a cart
+        # reads every entry in `solids` the same way without caring which layer
+        # it came from.
+        kind: :solid
+      }
     end
 
     # --- intgrid (collision) ---------------------------------------------

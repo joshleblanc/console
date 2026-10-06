@@ -622,16 +622,31 @@ map.entities_of('Enemy').first
 ```
 
 Field identifiers are snake_cased, so LDTK's `MaxSpeed` becomes `:max_speed`.
+Both the 1.x payload key (`value`) and the current one (`__value`) are read, so
+old and new exports load the same way.
 
 | Layer type | Becomes |
 |---|---|
-| `Entities` | entities in `map.entities` |
+| `Entities` | entities in `map.entities` — unless they declare themselves solid, in which case a collision rect in `map.solids` instead |
 | `IntGrid` | collision rects in `map.solids` (any non-zero cell) |
 | `Tiles` / `AutoLayer` | tile records in `map.tiles` (data only, not yet drawn) |
 
+An entity becomes collision when the **map** says so, not when the cart lists it,
+so a level never has to be mirrored in console code:
+
+| Marker | Where it is set |
+|---|---|
+| truthy `Solid` bool field | on the entity, or defaulted once on the entity *type* in LDTK |
+| truthy `OneWay` bool field | same — a pass-through platform is still a platform, so one-way implies solid |
+| `solid_entities: ['Platform']` | on the `load_map` call, naming LDTK identifiers outright |
+
+LDTK bakes an entity type's field defaults into every placed copy, so ticking
+`Solid` once on a `Platform` type in the editor marks every `Platform` in the
+level. Both field markers and `solid_entities:` also compose: the option is the
+escape hatch for an entity type that carries neither field.
+
 Options: `level:` picks a level by identifier, `flip_y: false` keeps raw LDTK
-coordinates, `one_way_value: 2` marks pass-through cells, and
-`solid_entities: ['Platform']` turns chosen entities into solids instead.
+coordinates, and `one_way_value: 2` marks pass-through cells.
 
 Two things this handles that a naive loader gets wrong:
 
