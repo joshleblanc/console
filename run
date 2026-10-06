@@ -1,12 +1,64 @@
 #!/bin/sh
 # Run a cart on the console.
 #
-#   ./run                     boot the default cart
-#   ./run --cart hello         boot a specific cart
-#   ./run --list               list available carts
-#   ./run --hud                start with the debug overlay on
+#   ./run                       boot the default cart
+#   ./run carts/hello           boot a cart by path
+#   ./run hello                 ...or by name (same as carts/hello)
+#   ./run --cart hello          the explicit switch form
+#   ./run --list                list available carts
+#   ./run --hud                 start with the debug overlay on
+#
+# A cart is identified by a path to its directory, and a bare name is shorthand
+# for carts/<name>. Any cart directory works -- games/space, demos/space,
+# carts/space -- as long as it sits inside this console, because DragonRuby
+# resolves asset paths relative to the game directory.
+#
+# The positional form is translated here rather than handled in the runtime:
+# DragonRuby parses argv by splitting on ' --', so a bare argument before the
+# first switch gets folded into the game directory it thinks you asked for, and
+# '--cart=x' arrives as one symbol key named "cart=x". Rewriting both into the
+# '--cart x' form keeps the ergonomics and never reaches the engine as
+# anything it cannot parse.
 #
 cd "$(dirname "$0")"
 DIR=$(pwd)
 DRAGONRUBY=$(dirname "$DIR")/dragonruby
+
+# Pass 1: find a cart argument. A bare argument is shorthand for --cart; an
+# explicit --cart wins, so `./run --cart foo foo` is left as the author meant.
+CART=""
+HAVE_SWITCH=0
+for arg in "$@"; do
+  case "$arg" in
+    --cart|--cart=*) HAVE_SWITCH=1 ;;
+    -*) ;;
+    *) [ -z "$CART" ] && CART="$arg" ;;
+  esac
+done
+
+if [ -n "$CART" ] && [ "$HAVE_SWITCH" -eq 0 ]; then
+  # Rebuild the list without the cart argument, then put --cart in front.
+  # Walking with shift is what lets this stay POSIX sh with no arrays.
+  COUNT=$#
+  while [ "$COUNT" -gt 0 ]; do
+    ARG="$1"
+    shift
+    [ "$ARG" = "$CART" ] || set -- "$@" "$ARG"
+    COUNT=$((COUNT - 1))
+  done
+  set -- "--cart" "$CART" "$@"
+fi
+
+# Pass 2: a --cart=x argument still reaches the engine unparsed, so split it.
+COUNT=$#
+while [ "$COUNT" -gt 0 ]; do
+  ARG="$1"
+  shift
+  case "$ARG" in
+    --cart=*) set -- "--cart" "${ARG#--cart=}" "$@" ;;
+    *) set -- "$@" "$ARG" ;;
+  esac
+  COUNT=$((COUNT - 1))
+done
+
 exec "$DRAGONRUBY" "$DIR" "$@"

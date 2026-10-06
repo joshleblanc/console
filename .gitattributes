@@ -1,0 +1,19 @@
+# Windows batch files do not survive LF endings: labels and parenthesised
+# blocks get subtly mangled, and the failure looks like a logic bug rather
+# than an encoding one. Pin them.
+*.bat text eol=crlf
+
+# The shell scripts are the opposite case -- they are run by /bin/sh, not by
+# anything that tolerates CRLF.
+run text eol=lf
+run-test text eol=lf
+smoke text eol=lf
+publish-cart text eol=lf
+
+*.rb text eol=lf
+*.md text eol=lf
+*.png binary
+*.ttf binary
+*.ogg binary
+*.wav binary
+*.ldtk text eol=lf

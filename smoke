@@ -16,9 +16,19 @@ DIR=$(pwd)
 DRAGONRUBY=$(dirname "$DIR")/dragonruby
 TICKS=${1:-300}
 
-# Cart names come from the entry files, so a directory without one is not a
-# cart -- the same rule Console::CartLoader#available applies.
-CARTS=$(ls carts/*/app/*.rb 2>/dev/null | sed 's|^carts/||; s|/app/.*||' | sort -u)
+# Cart names come from directories that actually hold an entry file, so a
+# half-created cart is not reported as a cart. Same rule as
+# Console::CartLoader#available, and the same rule smoke.bat uses.
+CARTS=""
+for dir in carts/*/; do
+  [ -d "$dir" ] || continue
+  name=${dir%/}
+  name=${name##*/}
+  if [ -f "$dir/app/main.rb" ] || [ -f "$dir/app/$name.rb" ]; then
+    CARTS="$CARTS $name"
+  fi
+done
+CARTS=$(printf '%s\n' $CARTS | grep . | sort -u)
 if [ -z "$CARTS" ]; then
   echo "smoke: no carts found in carts/"
   exit 1

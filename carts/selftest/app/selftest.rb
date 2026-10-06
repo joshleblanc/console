@@ -112,6 +112,25 @@ class StrSuite
     assert_equal 'Double', Console::Str.quoted_value_after(src2, 'TITLE')
     assert_nil Console::Str.quoted_value_after('nothing here', 'TITLE')
   end
+
+  # A cart's directory is its path, and its path is its name, so these two are
+  # load-bearing rather than conveniences. Hand-rolled because mruby has no
+  # Regexp and no dependable Range-indexed String#[].
+  test 'chomp_slash removes trailing slashes only' do
+    assert_equal 'carts/space', Console::Str.chomp_slash('carts/space/')
+    assert_equal 'carts/space', Console::Str.chomp_slash('carts/space')
+    assert_equal 'carts//space', Console::Str.chomp_slash('carts//space')
+    assert_equal '/', Console::Str.chomp_slash('/')
+  end
+
+  test 'basename takes the last path segment' do
+    assert_equal 'space', Console::Str.basename('carts/space')
+    assert_equal 'space', Console::Str.basename('carts/space/')
+    assert_equal 'one', Console::Str.basename('a/b/c/one')
+    assert_equal 'space', Console::Str.basename('space')
+    assert_equal 'b', Console::Str.basename('/a/b')
+    assert_equal '', Console::Str.basename('')
+  end
 end
 
 class PaletteSuite
@@ -256,11 +275,49 @@ class AssetsSuite
     found = loader.available
     SHIPPED.each do |name|
       assert_includes found, name
-      assert DR.stat_file(loader.cart_entry(name)),
-             "cart #{name} has no entry file at #{loader.cart_entry(name)}"
+      assert DR.stat_file(loader.cart_entry("carts/#{name}")),
+             "cart #{name} has no entry file at #{loader.cart_entry("carts/#{name}")}"
     end
     # A cart is a directory, never a loose .rb file.
     refute_includes found, 'selftest.rb'
+  end
+
+  # A cart is named by a path, and a bare name is shorthand for the gallery.
+  # Both routes have to reach the same directory, or ./run carts/x and ./run x
+  # would quietly boot different things.
+  test 'a bare name resolves into the default gallery' do
+    loader = Console::CartLoader.new $args
+    assert_equal 'carts/arcade', loader.cart_dir('arcade')
+    assert_equal 'carts/selftest', loader.cart_dir('selftest')
+  end
+
+  test 'a path is taken as given, whatever it points at' do
+    loader = Console::CartLoader.new $args
+    assert_equal 'games/space', loader.cart_dir('games/space')
+    assert_equal 'demos/deep/one', loader.cart_dir('demos/deep/one')
+  end
+
+  test 'a trailing slash does not change which cart is meant' do
+    loader = Console::CartLoader.new $args
+    assert_equal 'carts/arcade', loader.cart_dir('carts/arcade/')
+    assert_equal 'games/space', loader.cart_dir('games/space/')
+  end
+
+  test "a cart's name is the last segment of its directory" do
+    loader = Console::CartLoader.new $args
+    assert_equal 'arcade', loader.cart_name('carts/arcade')
+    assert_equal 'space', loader.cart_name('games/space')
+    assert_equal 'one', loader.cart_name('a/b/c/one')
+    assert_equal 'space', loader.cart_name('games/space/')
+  end
+
+  test 'the entry file is app/main.rb, falling back to the cart name' do
+    loader = Console::CartLoader.new $args
+    # The shipped carts use app/<name>.rb, which still resolves.
+    assert_equal 'carts/arcade/app/arcade.rb', loader.cart_entry('carts/arcade')
+    # A directory with no main.rb and no name match is not a cart at all.
+    assert_equal false, loader.cart?('carts/nope')
+    assert_equal false, loader.cart?('carts')
   end
 end
 
@@ -1225,6 +1282,16 @@ class RuntimeSuite
   test 'pin returns the loader so it can be chained' do
     loader = Console::CartLoader.new $args
     assert_equal loader, loader.pin('arcade')
+  end
+
+  # publish-cart pins 'carts/space', not 'space', so a staged build stays
+  # pinned to its directory even after the cart is copied into place.
+  test 'a pin may be a path and resolves like any other target' do
+    loader = Console::CartLoader.new($args).pin 'carts/arcade'
+    assert_equal 'carts/arcade', loader.pinned_name
+    assert_equal 'carts/arcade', loader.requested_dir
+    assert_equal 'arcade', loader.cart_name(loader.requested_dir)
+    assert loader.cart?(loader.requested_dir)
   end
 
   test 'a pin does not degrade to the default when the cart is absent' do

@@ -39,22 +39,44 @@ die() {
   exit 1
 }
 
-# Cart names, sorted. Derived from the filesystem every run so a newly added
-# cart is publishable without touching this script. A directory without an
-# entry file is not a cart.
+# Cart names in the default gallery, sorted. Derived from the filesystem every
+# run so a newly added cart is publishable without touching this script. A
+# directory without an entry file is not a cart.
 carts() {
-  ls "$CARTS_DIR"/*/app/*.rb 2>/dev/null | sed 's|.*/||; s|\.rb$||' | sort
+  ls -d "$CARTS_DIR"/*/ 2>/dev/null | sed 's|/$||; s|.*/||' | sort | while read -r c; do
+    [ -n "$(cart_entry "$CARTS_DIR/$c")" ] && echo "$c"
+  done
+}
+
+# A cart's entry file, app/main.rb preferred. Same order the loader uses.
+cart_entry() {
+  if [ -f "$1/app/main.rb" ]; then
+    echo "$1/app/main.rb"
+  elif [ -f "$1/app/$(basename "$1").rb" ]; then
+    echo "$1/app/$(basename "$1").rb"
+  fi
+}
+
+# A name or a path, resolved the way the loader resolves it: a bare name is the
+# gallery shorthand for carts/<name>.
+cart_dir() {
+  case "$1" in
+    */*) printf '%s' "$1" ;;
+    *) printf '%s/%s' "$CARTS_DIR" "$1" ;;
+  esac
 }
 
 cart_exists() {
-  ls "$CARTS_DIR/$1/app/$1.rb" >/dev/null 2>&1
+  [ -n "$(cart_entry "$(cart_dir "$1")")" ]
 }
 
 # A cart's TITLE constant, read without requiring it. Same trick --list uses,
 # so the published title and the listed title can never disagree.
 cart_title() {
+  entry=$(cart_entry "$(cart_dir "$1")")
+  [ -n "$entry" ] || return 0
   sed -n "s/^TITLE[[:space:]]*=[[:space:]]*['\"]\(.*\)['\"][[:space:]]*$/\1/p" \
-    "$CARTS_DIR/$1/app/$1.rb" | head -1
+    "$entry" | head -1
 }
 
 do_list() {
@@ -81,11 +103,17 @@ if [ "$1" = "--list" ]; then
   exit 0
 fi
 
-CART="$1"
+# Accepts a name or a path, like ./run does. Whatever the cart is called here,
+# it is staged (and pinned) as carts/<its directory name>, so a cart outside the
+# gallery publishes under the same layout a gallery cart would.
+CART_ARG="$1"
 shift
 
-cart_exists "$CART" || {
-  echo "publish-cart: no cart named '$CART'" >&2
+CART_SRC=$(cart_dir "$CART_ARG")
+CART=$(basename "$CART_SRC")
+
+cart_exists "$CART_SRC" || {
+  echo "publish-cart: no cart at '$CART_SRC'" >&2
   echo "publish-cart: available: $(carts | tr '\n' ' ')" >&2
   exit 1
 }
@@ -122,7 +150,7 @@ cp -R app/console "$STAGE/app/console"
 #    so those have to travel with it. Named explicitly, so this loop cannot
 #    drift into "copy whatever is in carts/".
 mkdir -p "$STAGE/carts"
-cp -R "$CARTS_DIR/$CART" "$STAGE/carts/$CART"
+cp -R "$CART_SRC" "$STAGE/carts/$CART"
 
 # 3. Fonts. DragonRuby reads these from the game root, so they cannot live
 #    inside a cart; the console ships its own copy for a standalone build.
@@ -151,14 +179,14 @@ meta_get() { sed -n "s/^$2=//p" "$1" | head -1; }
 meta_set() { sed -i "s|^$2=.*|$2=$3|" "$1"; }
 
 stage_metadata() {
-  cart_meta="$CARTS_DIR/$CART/metadata/game_metadata.txt"
+  cart_meta="$CART_SRC/metadata/game_metadata.txt"
   base="metadata/game_metadata.txt"
   icon_root="."
 
   if [ -f "$cart_meta" ]; then
     # The cart states its own identity and its own engine settings.
     base="$cart_meta"
-    icon_root="$CARTS_DIR/$CART"
+    icon_root="$CART_SRC"
     echo "publish-cart: using the metadata '$CART' ships"
   fi
 
@@ -179,7 +207,7 @@ stage_metadata() {
     # Only fill in identity the cart left blank; do not overrule it.
     [ -n "$(meta_get "$target" gameid)" ] || meta_set "$target" gameid "$CART"
     [ -n "$(meta_get "$target" gametitle)" ] ||
-      meta_set "$target" gametitle "$(cart_title "$CART")"
+      meta_set "$target" gametitle "$(cart_title "$CART_SRC")"
   else
     # Derived from the cart, so the published title and --list can never
     # disagree.
@@ -195,7 +223,7 @@ stage_metadata() {
   # An icon with the cart wins; otherwise the one this metadata names. Copied
   # rather than referenced, because the staged build has no cart tree at the
   # path the source used.
-  cart_icon="$CARTS_DIR/$CART/metadata/icon.png"
+  cart_icon="$CART_SRC/metadata/icon.png"
   if [ -f "$cart_icon" ]; then
     meta_set "$target" icon "metadata/icon.png"
     cp "$cart_icon" "$STAGE/metadata/icon.png"
@@ -227,7 +255,7 @@ stage_metadata
 
 module Main
   def boot
-    Console::CartLoader.new($args).pin('__CART__').run
+    Console::CartLoader.new($args).pin('carts/__CART__').run
   end
 
   def tick
@@ -262,14 +290,14 @@ verify_staging() {
     return 1
   fi
 
-  if [ ! -f "$STAGE/carts/$CART/app/$CART.rb" ]; then
+  if [ -z "$(cart_entry "$STAGE/carts/$CART")" ]; then
     echo "publish-cart: ABORT staged cart has no entry file" >&2
     return 1
   fi
 
   # The pin has to be in the entry point, or the build is merely a console
   # with one cart present rather than one that can only run that cart.
-  if ! grep -q "pin('$CART')" "$STAGE/app/main.rb"; then
+  if ! grep -q "pin('carts/$CART')" "$STAGE/app/main.rb"; then
     echo "publish-cart: ABORT staged main.rb does not pin '$CART'" >&2
     return 1
   fi

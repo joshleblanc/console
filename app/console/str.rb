@@ -88,6 +88,21 @@ module Console
       s[n, s.length - n]
     end
 
+    # Drop trailing slashes: chomp_slash('carts/space/') -> 'carts/space'
+    def chomp_slash(str)
+      s = str.to_s
+      s = s[0, s.length - 1] while s.end_with?('/') && s.length > 1
+      s
+    end
+
+    # The last segment of a path: basename('carts/space') -> 'space'
+    #
+    # A cart's directory doubles as its name, so this is what turns a path back
+    # into the module a cart is expected to define.
+    def basename(str)
+      chomp_slash(str).split('/').last.to_s
+    end
+
     # Uppercase the first character: capitalize('hello') -> 'Hello'
     def capitalize(str)
       s = str.to_s

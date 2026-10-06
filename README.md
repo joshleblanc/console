@@ -4,7 +4,7 @@ A fantasy console for [DragonRuby](https://dragonruby.org): a small, opinionated
 library that turns a **cart** — one directory — into a running game.
 
 ```ruby
-# carts/space/app/space.rb
+# carts/space/app/main.rb
 TITLE = 'space rocks'
 
 class Space
@@ -45,36 +45,110 @@ The console is an ordinary DragonRuby game directory.
 cd console
 
 ./run                  # boot the default cart
-./run --cart hello     # boot a specific cart
-./run --list           # what carts exist
+./run carts/hello      # boot a cart by path
+./run hello            # ...or by name (shorthand for carts/hello)
+./run --cart hello     # the explicit switch form
+./run --list           # what carts exist in the gallery
 ./run --hud            # start with the debug overlay on
 
 ./run-test             # run the self test (exits non-zero on failure)
 ./smoke                # boot every cart headlessly and report failures
 ```
 
-Carts are selected by `--cart <name>`, then `$CART`, then the default. A
-*published* build instead pins one cart, which outranks both of the above — see
-[Publishing a single cart](#publishing-a-single-cart). To debug one scene of a
+A cart is a **path to a cart directory**, and `carts/` is just the default
+gallery. Any directory inside the console works — `games/space`,
+`demos/space`, `carts/space` — and a bare name is shorthand for `carts/<name>`:
+
+```sh
+./run games/space          # a cart that does not live in carts/
+```
+
+The cart's name is the last segment of that path, and it is also the module the
+cart has to define, so `games/space/app/main.rb` defines `Space`.
+
+> A cart has to sit **inside** the console. DragonRuby resolves every file
+> against the game directory and refuses to stat a path that escapes it, so
+> `../elsewhere` and an absolute path both fail. The console says so rather than
+> implying a typo.
+
+Selection order is the cart argument, then `--cart`, then `$CART`, then the
+default. A *published* build instead pins one cart, which outranks all of them —
+see [Publishing a single cart](#publishing-a-single-cart). To debug one scene of a
 game without playing through the front door:
 
 ```sh
-./run --cart arcade --scene play
+./run carts/arcade --scene play
 ```
 
 ### Switches
 
 | Switch | Effect |
 |---|---|
-| `--cart <name>` | which cart to boot |
-| `--list` | print the available carts and exit |
+| `--cart <name\|path>` | which cart to boot |
+| `--list` | print the gallery's carts and exit |
 | `--selftest` | run the self test, print a report, exit |
 | `--scene <name>` | jump straight into a named scene |
 | `--hud` | start with the debug overlay on |
 | `--ticks <n>` | quit after n frames (headless smoke runs) |
 | `--shot <path>` | write a PNG of the last frames, then quit |
 
+`--list` covers the `carts/` gallery only; a cart kept elsewhere is still
+reachable by path, it just is not what the listing shows.
+
 On a headless machine, wrap the console in `xvfb-run -a`.
+
+---
+
+## On Windows
+
+Every shell script has a batch equivalent beside it, doing the same thing:
+
+| Shell | Windows |
+|---|---|
+| `./run [cart]` | `run.bat [cart]` |
+| `./run-test` | `run-test.bat` |
+| `./smoke [n]` | `smoke.bat [n]` |
+| `./publish-cart` | `publish-cart.bat` |
+
+```bat
+run.bat                             boot the default cart
+run.bat carts\hello                 boot a cart by path
+run.bat hello                       ...or by name
+run.bat --cart carts\arcade         the explicit switch form
+run.bat --list                      list the gallery
+
+run-test.bat                        the self test, non-zero on failure
+smoke.bat                           boot every cart headlessly
+smoke.bat 600                       ...for 600 frames each
+
+publish-cart.bat --list             list publishable carts
+publish-cart.bat arcade             package arcade for windows-amd64
+publish-cart.bat arcade --dry-run   stage + verify, package nothing
+```
+
+They expect the DragonRuby binaries in the parent directory, as on every other
+platform, and `publish-cart.bat` defaults `--platforms` to `windows-amd64`.
+
+The library, the cart contract and the runtime are entirely platform-neutral —
+only these four scripts differ. Two differences worth knowing:
+
+- **`publish-cart.bat` checks assets by booting.** `./publish-cart` greps the
+  cart's source for quoted asset paths. Parsing quotes in batch is fragile
+  enough that it would either skip the check or abort a good build, so the batch
+  version boots the staged directory for 60 frames and looks for the console's
+  own missing-asset warnings. That is stricter — it catches exactly the assets
+  the cart fails to load — but it only sees assets used at runtime, and it opens
+  a window. If the staged build cannot run at all, it says so loudly rather than
+  passing quietly.
+- **Carts must have CRLF endings.** A batch file with LF endings mangles labels
+  and parenthesised blocks in ways that look like logic bugs.
+  [`.gitattributes`](.gitattributes) pins `*.bat` to CRLF and the shell scripts
+  to LF.
+
+> **The batch files have not been run.** They were written by hand and reviewed —
+> labels, calls and control flow checked statically — but never executed, because
+> the machine they were written on cannot run `cmd.exe`. Treat the first run of
+> each as a test run.
 
 ---
 
@@ -200,9 +274,9 @@ console/
 │   │   ├── body.rb          kinematic platformer body
 │   │   ├── testing.rb       the self-test harness
 │   │   └── version.rb       the console's version string
-├── carts/                   one directory per cart
+├── carts/                   the default gallery: one directory per cart
 │   └── space/
-│       ├── app/space.rb     the cart, plus any code files beside it
+│       ├── app/main.rb      the cart, plus any code files beside it
 │       ├── sprites/         its own art
 │       ├── sounds/          its own sounds and music
 │       ├── maps/            its own LDTK levels
@@ -210,7 +284,7 @@ console/
 ├── sprites/                 console starter art: the fallback when a cart has
 │                            no file of its own
 ├── shots/                   screenshots written by --shot
-├── run / run-test / smoke
+├── run / run-test / smoke   and their .bat equivalents, for Windows
 ├── publish-cart             package exactly one cart
 └── metadata/game_metadata.txt
 ```
@@ -219,11 +293,12 @@ console/
 
 ## The cart contract
 
-A cart is a directory under `carts/`, and its entry file is `app/<name>.rb`.
-Define a class (or a module) named after the cart there, and implement whichever
-hooks you need. All of them are optional.
+A cart is a directory. Its entry file is `app/main.rb`, and it defines a class
+(or a module) named after the directory. Implement whichever hooks you need —
+they are all optional.
 
 ```ruby
+# carts/mygame/app/main.rb
 TITLE = 'my game'          # shown by --list
 
 class Mygame
@@ -275,13 +350,16 @@ The entry file is required first and the rest of `app/*.rb` follows, so a cart
 can be split up with no wiring:
 
 ```
-carts/space/app/space.rb     # the cart
-carts/space/app/entities.rb  # required automatically
+carts/space/app/main.rb       # the cart
+carts/space/app/entities.rb   # required automatically
 ```
 
 Sub-directories are the cart's own to require
 (`require 'carts/space/app/boss/boss'`). Only the booted cart's files are ever
 required, so a cart broken mid-edit cannot stop the console from starting.
+
+`app/<name>.rb` is still accepted as an entry file name, so a cart written that
+way keeps working — the loader prefers `app/main.rb` and falls back to it.
 
 A cart with scenes uses them *instead of* `update`, and `render` still runs last:
 
