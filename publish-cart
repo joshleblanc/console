@@ -1,0 +1,258 @@
+#!/bin/sh
+# Publish exactly one cart, and prove it.
+#
+#   ./publish-cart arcade                  package arcade for linux-amd64
+#   ./publish-cart arcade --platforms=html5,linux-amd64
+#   ./publish-cart arcade --dry-run        stage + verify, do not package
+#   ./publish-cart --list                  list carts and their publish titles
+#
+# dragonruby-publish packages a whole game directory, and this one holds every
+# cart under app/carts. Publishing it as-is would ship the selftest, the
+# widgets gallery and every other cart inside the arcade build. So this script
+# never points dragonruby-publish at ./ -- it stages a throwaway directory that
+# contains the console library, exactly one cart, and a main.rb that pins that
+# cart, then packages the staging directory instead.
+#
+# The single-cart guarantee is enforced by verify_staging below, which reads
+# the staged directory back off disk rather than trusting the copy loop. It
+# fails the run rather than shipping a build with extra carts in it.
+#
+# Anything not understood here is passed straight through to
+# dragonruby-publish, so --platforms, --package and friends work as usual.
+set -eu
+
+cd "$(dirname "$0")"
+DIR=$(pwd)
+ROOT=$(dirname "$DIR")
+DRAGONRUBY_PUBLISH="$ROOT/dragonruby-publish"
+CARTS_DIR="app/carts"
+STAGE_ROOT="$ROOT/builds/cart-staging"
+
+die() {
+  echo "publish-cart: $*" >&2
+  exit 1
+}
+
+# Cart names, sorted. Derived from the filesystem every run so a newly added
+# cart is publishable without touching this script.
+carts() {
+  ls "$CARTS_DIR"/*.rb 2>/dev/null | sed 's|.*/||; s|\.rb$||' | sort
+}
+
+cart_exists() {
+  ls "$CARTS_DIR/$1.rb" >/dev/null 2>&1
+}
+
+# A cart's TITLE constant, read without requiring it. Same trick --list uses,
+# so the published title and the listed title can never disagree.
+cart_title() {
+  sed -n "s/^TITLE[[:space:]]*=[[:space:]]*['\"]\(.*\)['\"][[:space:]]*$/\1/p" \
+    "$CARTS_DIR/$1.rb" | head -1
+}
+
+do_list() {
+  echo "Publishable carts:"
+  for c in $(carts); do
+    t=$(cart_title "$c")
+    [ -n "$t" ] && t="  -- $t"
+    echo "  $c$t"
+  done
+  echo ""
+  echo "Publish one with:  ./publish-cart <cart>"
+}
+
+# --- usage ----------------------------------------------------------------
+
+[ $# -gt 0 ] || {
+  echo "usage: ./publish-cart <cart> [--platforms=...] [--dry-run]" >&2
+  echo "       ./publish-cart --list" >&2
+  exit 2
+}
+
+if [ "$1" = "--list" ]; then
+  do_list
+  exit 0
+fi
+
+CART="$1"
+shift
+
+cart_exists "$CART" || {
+  echo "publish-cart: no cart named '$CART'" >&2
+  echo "publish-cart: available: $(carts | tr '\n' ' ')" >&2
+  exit 1
+}
+
+DRY_RUN=0
+PLATFORM_ARGS=""
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --platforms=*) PLATFORM_ARGS="$arg" ;;
+    --package|--package-with-remote-hotload|--only-package|"") ;;
+    *) PLATFORM_ARGS="$PLATFORM_ARGS $arg" ;;
+  esac
+done
+
+# Default to the host's desktop build; --platforms= overrides it.
+[ -n "$PLATFORM_ARGS" ] || PLATFORM_ARGS="--platforms=linux-amd64"
+
+# --- stage ----------------------------------------------------------------
+
+STAGE="$STAGE_ROOT/$CART"
+
+# Rebuild from scratch every time. A stale staging directory is exactly how a
+# deleted cart ends up back inside a build, so it is removed rather than
+# merged into.
+rm -rf "$STAGE"
+mkdir -p "$STAGE/app" "$STAGE/metadata"
+
+# 1. The console library. The cart is meaningless without it.
+cp -R app/console "$STAGE/app/console"
+
+# 2. Exactly one cart. Named explicitly so this loop cannot drift into
+#    "copy whatever is in app/carts".
+mkdir -p "$STAGE/app/carts"
+cp "$CARTS_DIR/$CART.rb" "$STAGE/app/carts/$CART.rb"
+
+# 3. Assets. Sprites are indexed recursively at boot and carts reference them by
+#    short name, so the whole tree comes along.
+[ -d sprites ] && cp -R sprites "$STAGE/sprites"
+[ -d sounds ] && cp -R sounds "$STAGE/sounds"
+
+# 4. Fonts, when the host checkout has them (DragonRuby ships its own).
+[ -f font.ttf ] && cp font.ttf "$STAGE/font.ttf"
+[ -f tiny.ttf ] && cp tiny.ttf "$STAGE/tiny.ttf"
+
+# 5. Metadata, derived from the cart so the title cannot drift from --list.
+TITLE=$(cart_title "$CART")
+[ -n "$TITLE" ] || TITLE="$CART"
+VERSION=${CART_VERSION:-1.0}
+GAMEID=${CART_GAMEID:-$CART}
+DEV_ID=${CART_DEVID:-$(sed -n 's/^devid=//p' metadata/game_metadata.txt | head -1)}
+DEV_TITLE=${CART_DEVTITLE:-$(sed -n 's/^devtitle=//p' metadata/game_metadata.txt | head -1)}
+DEV_ID=${DEV_ID:-developer}
+DEV_TITLE=${DEV_TITLE:-Developer}
+
+{
+  echo "devid=$DEV_ID"
+  echo "devtitle=$DEV_TITLE"
+  echo "gameid=$GAMEID"
+  echo "gametitle=$TITLE"
+  echo "version=$VERSION"
+  if [ -f metadata/icon.png ]; then
+    cp metadata/icon.png "$STAGE/metadata/icon.png"
+    echo "icon=metadata/icon.png"
+  fi
+} > "$STAGE/metadata/game_metadata.txt"
+
+# 6. An entry point that pins the cart. This is what makes "only this cart" a
+#    property of the build rather than a promise in a README: the pin outranks
+#    --cart and $CART, and a pinned cart that is missing aborts the boot
+#    instead of quietly falling back to the default.
+cat > "$STAGE/app/main.rb" <<EOF
+# GENERATED BY ./publish-cart -- DO NOT EDIT.
+#
+# Single-cart build of '$CART'. The console library is unmodified; only this
+# entry point differs from a normal checkout.
+require 'app/console/version.rb'
+require 'app/console/str.rb'
+require 'app/console/geom.rb'
+require 'app/console/palette.rb'
+require 'app/console/draw.rb'
+require 'app/console/input.rb'
+require 'app/console/sprites.rb'
+require 'app/console/animation.rb'
+require 'app/console/audio.rb'
+require 'app/console/camera.rb'
+require 'app/console/tween.rb'
+require 'app/console/scene.rb'
+require 'app/console/entity.rb'
+require 'app/console/ui.rb'
+require 'app/console/testing.rb'
+require 'app/console/cart_loader.rb'
+require 'app/console/core.rb'
+
+module Main
+  def boot
+    Console::CartLoader.new(\$args).pin('$CART').run
+  end
+
+  def tick
+    Console.tick args
+  end
+
+  def shutdown
+    Console.debug 'shutdown'
+  end
+end
+EOF
+
+# --- verify ---------------------------------------------------------------
+
+# Read the staged directory back and confirm it holds one cart and one cart
+# only. Deliberately independent of the copy above: if cp ever copied a
+# directory, or a stale file survived, this is what catches it.
+verify_staging() {
+  staged=$(ls "$STAGE/app/carts" 2>/dev/null | grep '\.rb$' | sed 's|\.rb$||' | sort)
+  count=$(printf '%s\n' "$staged" | grep -c . || true)
+  expected="$CART"
+
+  if [ "$count" -ne 1 ]; then
+    echo "publish-cart: ABORT staging '$STAGE' has $count carts, expected 1:" >&2
+    printf '%s\n' "$staged" | sed 's/^/    /' >&2
+    return 1
+  fi
+
+  if [ "$staged" != "$expected" ]; then
+    echo "publish-cart: ABORT staged cart is '$staged', expected '$expected'" >&2
+    return 1
+  fi
+
+  # The pin has to be in the entry point, or the build is merely a console
+  # with one cart present rather than one that can only run that cart.
+  if ! grep -q "pin('$CART')" "$STAGE/app/main.rb"; then
+    echo "publish-cart: ABORT staged main.rb does not pin '$CART'" >&2
+    return 1
+  fi
+
+  # No other cart may be referenced from anywhere in the staged tree.
+  for other in $(carts); do
+    [ "$other" = "$CART" ] && continue
+    if grep -rl "carts/$other" "$STAGE" >/dev/null 2>&1; then
+      echo "publish-cart: ABORT staged build references cart '$other'" >&2
+      return 1
+    fi
+  done
+
+  echo "publish-cart: verified 1 cart ('$CART') in $(basename "$STAGE")"
+  return 0
+}
+
+verify_staging || die "refusing to package a build that is not single-cart"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo ""
+  echo "staged tree:"
+  find "$STAGE" -type f | sed "s|$STAGE/|  |" | sort
+  echo ""
+  echo "publish-cart: --dry-run, nothing packaged"
+  exit 0
+fi
+
+# --- package --------------------------------------------------------------
+
+[ -x "$DRAGONRUBY_PUBLISH" ] || die "cannot find $DRAGONRUBY_PUBLISH"
+
+# dragonruby-publish resolves a relative game directory against the DragonRuby
+# root it ships in, and silently fails to read metadata from an absolute one --
+# so run it from the root and pass the staging dir relative to it.
+REL_STAGE=$(printf '%s' "$STAGE" | sed "s|^$ROOT/||")
+
+echo "publish-cart: packaging '$CART' -> $ROOT/builds"
+cd "$ROOT"
+# shellcheck disable=SC2086
+"$DRAGONRUBY_PUBLISH" --only-package $PLATFORM_ARGS "$REL_STAGE"
+
+echo ""
+echo "publish-cart: done. artifacts are in $ROOT/builds"

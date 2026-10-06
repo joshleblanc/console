@@ -1057,6 +1057,57 @@ class RuntimeSuite
     assert_equal 'selftest', Console.cart_name
   end
 
+  # --- single-cart publishing (see ./publish-cart) ----------------------
+  #
+  # A published build ships one cart and an entry point that pins it, so the
+  # pin has to outrank both ways of asking for a different cart.
+
+  test 'an unpinned loader is not pinned' do
+    loader = Console::CartLoader.new $args
+    assert_equal false, loader.pinned?
+    assert_nil loader.pinned_name
+  end
+
+  test 'a pinned loader reports the pinned cart' do
+    loader = Console::CartLoader.new($args).pin 'arcade'
+    assert_equal true, loader.pinned?
+    assert_equal 'arcade', loader.pinned_name
+    assert_equal 'arcade', loader.requested_name
+  end
+
+  test 'a pin outranks --cart and the CART env var' do
+    # cli_arguments carries whatever this run was started with; the pinned
+    # name must win over both of the documented selection routes.
+    loader = Console::CartLoader.new($args).pin 'arcade'
+    assert_equal 'arcade', loader.requested_name
+  end
+
+  test 'pin coerces its argument to a string' do
+    loader = Console::CartLoader.new($args).pin :arcade
+    assert_equal 'arcade', loader.pinned_name
+    assert_equal 'arcade', loader.requested_name
+  end
+
+  test 'pin returns the loader so it can be chained' do
+    loader = Console::CartLoader.new $args
+    assert_equal loader, loader.pin('arcade')
+  end
+
+  test 'a pin does not degrade to the default when the cart is absent' do
+    # The dangerous case is a typo shipping some *other* cart as the game. A
+    # pinned loader must keep reporting the pinned name even when it is not on
+    # disk, so the boot path can abort instead of quietly falling back.
+    #
+    # `run` is deliberately not called here: aborting calls DR.request_quit,
+    # and a unit test must not quit the process it is running in. The abort
+    # itself is covered end to end by ./publish-cart, which boots a staged
+    # build with its cart removed.
+    loader = Console::CartLoader.new($args).pin 'no_such_cart'
+    refute_includes loader.available, 'no_such_cart'
+    assert_equal 'no_such_cart', loader.requested_name
+    refute_equal Console::CartLoader::DEFAULT_CART, loader.requested_name
+  end
+
   test 'api mixin does not collide with cart or scene hook names' do
     # A cart/scene hook that shares a name with an API method gets shadowed,
     # which is how `draw.sprite` inside a scene once re-entered the scene's own

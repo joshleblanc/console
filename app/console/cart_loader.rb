@@ -32,10 +32,32 @@ module Console
       @errors = []
       @selected = nil
       @cart = nil
+      @pinned = nil
     end
 
     def cli
       @cli ||= DR.cli_arguments
+    end
+
+    # Pin the loader to exactly one cart.
+    #
+    # This is how a published single-cart build boots: ./publish-cart stages a
+    # directory holding one cart file and an entry point that pins it, so the
+    # cart cannot be swapped at runtime.
+    #
+    # A pin outranks --cart and $CART. In a packaged build there is no terminal
+    # to type at, and the whole point is that what you shipped is what runs.
+    def pin(name)
+      @pinned = name.to_s
+      self
+    end
+
+    def pinned?
+      !@pinned.nil? && !@pinned.to_s.empty?
+    end
+
+    def pinned_name
+      @pinned
     end
 
     # --- discovery --------------------------------------------------------
@@ -52,7 +74,11 @@ module Console
     end
 
     # Explicit wins, then the env var, then a deterministic fallback.
+    #
+    # A pin beats everything: a published build is pinned, and there is nothing
+    # sensible for it to fall back *to*.
     def requested_name
+      return @pinned if pinned?
       name = cli[:cart] if cli.key? :cart
       name = DR.getenv('CART') if name.nil? || name.to_s.empty?
       name = DEFAULT_CART if name.nil? || name.to_s.empty?
@@ -72,6 +98,14 @@ module Console
       available_names = available
 
       unless available_names.include?(name)
+        # A pinned cart that is missing is a packaging bug, not a typo to paper
+        # over. Booting some other cart here would ship a game that is not the
+        # one that was asked for, so fail loudly instead.
+        if pinned?
+          abort_boot "pinned cart '#{name}' is not present in #{CARTS_DIR}"
+          return nil
+        end
+
         fallback = available_names.include?(DEFAULT_CART) ? DEFAULT_CART : available_names.first
         if fallback.nil?
           abort_boot "no carts found in #{CARTS_DIR}"
@@ -105,8 +139,11 @@ module Console
       Console.boot @args, instance, name
       apply_switches
 
-      # --selftest implies the selftest cart, whichever cart booted.
-      if switch?(:selftest)
+      # --selftest implies the selftest cart, whichever cart booted. A pinned
+      # build ships exactly one cart, so if that cart is not the selftest there
+      # is nothing to require -- and requiring a missing file would crash the
+      # published build rather than report a clean skip.
+      if switch?(:selftest) && !pinned?
         require "#{CARTS_DIR}/selftest.rb"
         summary = Console::Test.run @args
         puts Console::Test.summary_line(summary)

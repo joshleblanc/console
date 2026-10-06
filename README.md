@@ -53,8 +53,10 @@ cd console
 ./smoke                # boot every cart headlessly and report failures
 ```
 
-Carts are selected by `--cart <name>`, then `$CART`, then the default. To debug
-one scene of a game without playing through the front door:
+Carts are selected by `--cart <name>`, then `$CART`, then the default. A
+*published* build instead pins one cart, which outranks both of the above — see
+[Publishing a single cart](#publishing-a-single-cart). To debug one scene of a
+game without playing through the front door:
 
 ```sh
 ./run --cart arcade --scene play
@@ -73,6 +75,59 @@ one scene of a game without playing through the front door:
 | `--shot <path>` | write a PNG of the last frames, then quit |
 
 On a headless machine, wrap the console in `xvfb-run -a`.
+
+---
+
+## Publishing a single cart
+
+`dragonruby-publish` packages a whole game directory, and this directory holds
+*every* cart under `app/carts`. Pointed at the console, it would ship the
+selftest, the widgets gallery and the arcade cart all inside one build.
+
+So publish through `./publish-cart`, which stages a throwaway directory first:
+
+```sh
+./publish-cart --list                  # carts, with the titles that will publish
+./publish-cart arcade                  # package arcade for linux-amd64
+./publish-cart arcade --dry-run        # stage + verify, package nothing
+./publish-cart arcade --platforms=html5,linux-amd64
+```
+
+It stages `builds/cart-staging/<cart>/` containing the console library, the
+cart, the assets, metadata derived from the cart's `TITLE`, and an entry point
+that **pins** the cart — then packages that directory. Artifacts land in
+`../builds/`.
+
+Metadata comes from the cart itself, so the published title and `--list` can
+never disagree. These override the defaults:
+
+| Variable | Default |
+|---|---|
+| `CART_VERSION` | `1.0` |
+| `CART_GAMEID` | the cart name |
+| `CART_DEVID` / `CART_DEVTITLE` | from `metadata/game_metadata.txt` |
+
+### Why only one cart
+
+Two independent checks, because "trust the copy loop" is how the wrong game
+gets published:
+
+1. **A script-side guard** reads the staged directory back off disk and refuses
+   to package unless it holds exactly one `.rb` cart, it is the requested one,
+   the generated `main.rb` pins it, and no other cart is referenced anywhere in
+   the tree. It exits non-zero rather than shipping a contaminated build.
+
+2. **A runtime pin.** `Console::CartLoader#pin` makes the choice unrecoverable
+   at runtime: the pin outranks `--cart` and `$CART`, and a pinned cart that is
+   missing aborts the boot instead of falling back to the default. A typo can
+   never ship a different game than the one you built.
+
+Staging is rebuilt from scratch on every run, so a deleted cart cannot linger
+in a build.
+
+> `dragonruby-publish` resolves a relative game directory against the
+> DragonRuby root it ships in, and fails to read metadata from an absolute one.
+> The script handles this for you.
 
 ---
 
@@ -104,6 +159,7 @@ console/
 ├── sprites/                 assets, discovered and indexed automatically
 ├── shots/                   screenshots written by --shot
 ├── run / run-test / smoke
+├── publish-cart             package exactly one cart
 └── metadata/game_metadata.txt
 ```
 
@@ -407,16 +463,17 @@ Screenshots of each live in `shots/` (regenerate with `--shot`).
 ./run-test
 ```
 
-116 tests / 1303 assertions, executed **inside the real DragonRuby runtime** —
+122 tests / 1315 assertions, executed **inside the real DragonRuby runtime** —
 against the real renderer, the real output collections and the real mruby build,
 not a stand-in. The suite covers geometry, strings, palettes, the sprite index
 and procedural generation, drawing and coordinate systems, tweens and easing,
-scenes, entities, animation, the camera, widgets, input, and the runtime wiring.
+scenes, entities, animation, the camera, widgets, input, cart selection and
+pinning, and the runtime wiring.
 
 It prints a machine-readable summary:
 
 ```
-CONSOLE_TEST_STATUS=PASS TESTS=116 ASSERTIONS=1303 FAILURES=0
+CONSOLE_TEST_STATUS=PASS TESTS=122 ASSERTIONS=1315 FAILURES=0
 ```
 
 `./smoke` additionally boots every cart headlessly and fails if any raises.
