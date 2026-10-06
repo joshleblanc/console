@@ -129,27 +129,86 @@ cp -R "$CARTS_DIR/$CART" "$STAGE/carts/$CART"
 [ -f font.ttf ] && cp font.ttf "$STAGE/font.ttf"
 [ -f tiny.ttf ] && cp tiny.ttf "$STAGE/tiny.ttf"
 
-# 5. Metadata, derived from the cart so the title cannot drift from --list.
-TITLE=$(cart_title "$CART")
-[ -n "$TITLE" ] || TITLE="$CART"
-VERSION=${CART_VERSION:-1.0}
-GAMEID=${CART_GAMEID:-$CART}
-DEV_ID=${CART_DEVID:-$(sed -n 's/^devid=//p' metadata/game_metadata.txt | head -1)}
-DEV_TITLE=${CART_DEVTITLE:-$(sed -n 's/^devtitle=//p' metadata/game_metadata.txt | head -1)}
-DEV_ID=${DEV_ID:-developer}
-DEV_TITLE=${DEV_TITLE:-Developer}
+# 4. Metadata.
+#
+# DragonRuby reads metadata/game_metadata.txt from the GAME ROOT -- the path is
+# hardcoded in the engine, so a cart can never have the engine read its own copy
+# -- which is why this file is generated per cart instead of shipped as-is.
+#
+# The part that matters: DragonRuby loads the whole file into
+# Cvars["game_metadata.*"]. The first six lines are read positionally (devid,
+# devtitle, gameid, gametitle, version, icon), but every key after them is read
+# by name and decides real behaviour -- hd, highdpi, orientation, aspect_mode,
+# sprites_directory. Writing a fresh six-line file here would silently drop all
+# of them, and the published build would stop matching the checkout you tested
+# (a cart with highdpi=true in the console metadata builds at lowdpi, and
+# nothing tells you).
+#
+# So: start from the console's file, or from the cart's own when it ships one,
+# and rewrite only the cart-specific fields. Every other key is inherited.
 
-{
-  echo "devid=$DEV_ID"
-  echo "devtitle=$DEV_TITLE"
-  echo "gameid=$GAMEID"
-  echo "gametitle=$TITLE"
-  echo "version=$VERSION"
-  if [ -f metadata/icon.png ]; then
-    cp metadata/icon.png "$STAGE/metadata/icon.png"
-    echo "icon=metadata/icon.png"
+meta_get() { sed -n "s/^$2=//p" "$1" | head -1; }
+meta_set() { sed -i "s|^$2=.*|$2=$3|" "$1"; }
+
+stage_metadata() {
+  cart_meta="$CARTS_DIR/$CART/metadata/game_metadata.txt"
+  base="metadata/game_metadata.txt"
+  icon_root="."
+
+  if [ -f "$cart_meta" ]; then
+    # The cart states its own identity and its own engine settings.
+    base="$cart_meta"
+    icon_root="$CARTS_DIR/$CART"
+    echo "publish-cart: using the metadata '$CART' ships"
   fi
-} > "$STAGE/metadata/game_metadata.txt"
+
+  [ -f "$base" ] || die "no metadata to publish (looked for $base)"
+  mkdir -p "$STAGE/metadata"
+  cp "$base" "$STAGE/metadata/game_metadata.txt"
+  target="$STAGE/metadata/game_metadata.txt"
+
+  # The first six lines are positional, so a file missing one of them would
+  # shift every value across. Refuse rather than publish a scrambled identity.
+  missing=""
+  for key in devid devtitle gameid gametitle version icon; do
+    grep -q "^$key=" "$target" || missing="$missing $key"
+  done
+  [ -z "$missing" ] || die "metadata is missing required keys:$missing"
+
+  if [ -f "$cart_meta" ]; then
+    # Only fill in identity the cart left blank; do not overrule it.
+    [ -n "$(meta_get "$target" gameid)" ] || meta_set "$target" gameid "$CART"
+    [ -n "$(meta_get "$target" gametitle)" ] ||
+      meta_set "$target" gametitle "$(cart_title "$CART")"
+  else
+    # Derived from the cart, so the published title and --list can never
+    # disagree.
+    meta_set "$target" gameid "${CART_GAMEID:-$CART}"
+    meta_set "$target" gametitle "${CART_GAMETITLE:-$(cart_title "$CART")}"
+  fi
+
+  [ -z "${CART_GAMETITLE:-}" ] || meta_set "$target" gametitle "$CART_GAMETITLE"
+  [ -z "${CART_VERSION:-}" ] || meta_set "$target" version "$CART_VERSION"
+  [ -z "${CART_DEVID:-}" ] || meta_set "$target" devid "$CART_DEVID"
+  [ -z "${CART_DEVTITLE:-}" ] || meta_set "$target" devtitle "$CART_DEVTITLE"
+
+  # An icon with the cart wins; otherwise the one this metadata names. Copied
+  # rather than referenced, because the staged build has no cart tree at the
+  # path the source used.
+  cart_icon="$CARTS_DIR/$CART/metadata/icon.png"
+  if [ -f "$cart_icon" ]; then
+    meta_set "$target" icon "metadata/icon.png"
+    cp "$cart_icon" "$STAGE/metadata/icon.png"
+  else
+    icon_path=$(meta_get "$target" icon)
+    if [ -n "$icon_path" ] && [ -f "$icon_root/$icon_path" ]; then
+      mkdir -p "$STAGE/$(dirname "$icon_path")"
+      cp "$icon_root/$icon_path" "$STAGE/$icon_path"
+    fi
+  fi
+}
+
+stage_metadata
 
 # 6. An entry point that pins the cart. This is what makes "only this cart" a
 #    property of the build rather than a promise in a README: the pin outranks

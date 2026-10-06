@@ -98,14 +98,40 @@ cart directory (code *and* the sprites, sounds, maps and data it owns),
 metadata derived from the cart's `TITLE`, and an entry point that **pins** the
 cart — then packages that directory. Artifacts land in `../builds/`.
 
-Metadata comes from the cart itself, so the published title and `--list` can
-never disagree. These override the defaults:
+### Metadata
+
+`metadata/game_metadata.txt` is the one file a cart genuinely cannot own: the
+engine reads it from the **game root** (the path is hardcoded in DragonRuby), so
+every cart shares it while you develop. Running `--cart arcade` in a checkout
+therefore still identifies as `Console` — that is DragonRuby, not the console.
+
+Publishing resolves it per cart. A cart that ships its own
+`carts/<name>/metadata/game_metadata.txt` uses that verbatim — its own identity,
+its own icon, and its own engine settings. Otherwise the console's file is
+inherited and only `gameid` and `gametitle` are rewritten, from the cart name and
+the cart's `TITLE`, so the published title and `--list` can never disagree.
+
+The important part is what is *not* rewritten. DragonRuby loads the whole file
+into `Cvars["game_metadata.*"]`: the first six lines are read positionally
+(`devid`, `devtitle`, `gameid`, `gametitle`, `version`, `icon`), and every key
+after them is read by name and decides real behaviour — `hd`, `highdpi`,
+`orientation`, `aspect_mode`, `sprites_directory`. So the staged file is the
+console's file with those fields edited in place, never a freshly written
+six-line file. Writing one drops the rest, and the published build quietly stops
+matching the checkout you tested: a `highdpi=true` in the console metadata used to
+build at lowdpi with nothing to say so.
+
+A cart's `metadata/icon.png` also wins over the console's, which is how each cart
+ends up with its own icon instead of the console's.
+
+These environment variables override individual fields:
 
 | Variable | Default |
 |---|---|
-| `CART_VERSION` | `1.0` |
+| `CART_VERSION` | the metadata's `version` |
 | `CART_GAMEID` | the cart name |
-| `CART_DEVID` / `CART_DEVTITLE` | from `metadata/game_metadata.txt` |
+| `CART_GAMETITLE` | the cart's `TITLE` |
+| `CART_DEVID` / `CART_DEVTITLE` | the metadata's `devid` / `devtitle` |
 
 ### Why only one cart
 
