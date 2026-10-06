@@ -1,0 +1,21 @@
+#!/bin/sh
+# Run the console self test and exit non-zero if anything failed.
+#
+#   ./run-test
+#
+# Tests execute inside the real DragonRuby runtime, so a pass means the library
+# works against the actual renderer and the actual mruby build.
+cd "$(dirname "$0")"
+DIR=$(pwd)
+DRAGONRUBY=$(dirname "$DIR")/dragonruby
+
+OUTPUT=$("$DRAGONRUBY" "$DIR" --selftest "$@" 2>&1)
+printf '%s\n' "$OUTPUT"
+
+if printf '%s' "$OUTPUT" | grep -q 'CONSOLE_TEST_STATUS=PASS'; then
+  exit 0
+fi
+
+echo ""
+echo "run-test: FAILED (no CONSOLE_TEST_STATUS=PASS in the output above)"
+exit 1

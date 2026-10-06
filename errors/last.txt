@@ -1,0 +1,28 @@
+* EXCEPTION:
+* ERROR: :< method missing on ~TrueClass~.
+
+#+begin_src ~TrueClass#inspect~
+true
+#+end_src ~TrueClass#inspect~
+
+
+
+The method named
+  :<
+with args
+  [2]
+doesn't exist on [TrueClass, ValueType].
+
+(suggestions above)
+** Backtrace:
+*** app/console/sprites.rb:239:in stripes
+*** app/console/sprites.rb:238:in stripes
+*** app/console/sprites.rb:237:in stripes
+*** app/console/sprites.rb:194:in generate
+*** app/console/sprites.rb:177:in auto
+*** app/console/core.rb:263:in auto_sprite
+*** app/console/core.rb:570:in auto_sprite
+*** app/carts/arcade.rb:30:in setup
+*** app/console/core.rb:88:in boot
+*** app/console/cart_loader.rb:105:in run
+*** app/main.rb:47:in boot

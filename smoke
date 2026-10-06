@@ -1,0 +1,45 @@
+#!/bin/sh
+# Boot every cart headlessly for a fixed number of frames and report which ones
+# raise. This is the cheapest way to catch "I edited the library and now one of
+# the carts is broken".
+#
+#   ./smoke                 300 frames each
+#   ./smoke 600             600 frames each
+#
+# On a headless box (CI, a container, WSL) wrap it in xvfb-run:
+#
+#   xvfb-run -a ./smoke
+#
+# Exits non-zero if any cart raised an exception.
+cd "$(dirname "$0")"
+DIR=$(pwd)
+DRAGONRUBY=$(dirname "$DIR")/dragonruby
+TICKS=${1:-300}
+
+CARTS=$(ls app/carts/*.rb 2>/dev/null | sed 's|app/carts/||; s|\.rb$||' | sort)
+if [ -z "$CARTS" ]; then
+  echo "smoke: no carts found in app/carts"
+  exit 1
+fi
+
+FAILED=""
+for cart in $CARTS; do
+  OUT=$("$DRAGONRUBY" "$DIR" --cart "$cart" --ticks "$TICKS" 2>&1)
+  if printf '%s' "$OUT" | grep -q 'EXCEPTION'; then
+    echo "FAIL  $cart"
+    printf '%s\n' "$OUT" | grep -A4 'EXCEPTION' | head -8 | sed 's/^/        /'
+    FAILED="$FAILED $cart"
+  else
+    echo "ok    $cart  ($TICKS frames)"
+  fi
+done
+
+if [ -n "$FAILED" ]; then
+  echo ""
+  echo "smoke: FAILED:$FAILED"
+  exit 1
+fi
+
+echo ""
+echo "smoke: all carts booted cleanly"
+exit 0
