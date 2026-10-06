@@ -10,8 +10,8 @@
 TITLE = 'hello'
 
 class Hello
-  # Optional. Declare short names for assets here; anything under ./sprites
-  # is already reachable by name without this.
+  # Optional. Declare short names for assets here; anything under this cart's
+  # own sprites/ is already reachable by name without this.
   def self.assets
     {}
   end

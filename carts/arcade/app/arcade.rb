@@ -18,8 +18,9 @@ class Arcade
   BULLET_SPEED = 9.0
 
   def self.assets
-    # Only the ship has real art. Everything else is generated below, which is
-    # the point: a cart is playable before any art exists.
+    # Only the ship has real art, and it lives in this cart's own
+    # sprites/hero/. Everything else is generated below, which is the point: a
+    # cart is playable before any art exists.
     { sprites: { ship: 'sprites/hero/idle/0.png' } }
   end
 

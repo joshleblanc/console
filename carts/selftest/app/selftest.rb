@@ -139,22 +139,153 @@ class PaletteSuite
   end
 end
 
+# Asset scoping is what keeps two carts from colliding, so it is tested on its
+# own instead of only as a side effect of the sprite index.
+class AssetsSuite
+  include Console::Test
+
+  SHIPPED = %w[arcade hello ldtk selftest widgets]
+
+  # Every test here moves the global asset scope. Put it back the way the boot
+  # left it -- and rebuild the index to match -- so no later suite can inherit
+  # somebody else's cart.
+  def scoped(cart_root)
+    before = Console::Assets.root
+    Console::Assets.boot cart_root
+    begin
+      yield
+    ensure
+      Console::Assets.boot before
+      Console::Sprites.index!
+    end
+  end
+
+  test 'a booted cart knows its own directory' do
+    scoped 'carts/arcade' do
+      assert_equal 'carts/arcade', Console.assets_root
+      assert Console::Assets.scoped?
+    end
+  end
+
+  test 'paths are cart-relative' do
+    scoped 'carts/ldtk' do
+      assert_equal 'carts/ldtk/maps/Level_0.ldtk',
+                   Console.asset('maps/Level_0.ldtk')
+    end
+  end
+
+  test 'resolving twice does not nest the path' do
+    # Paths travel through several layers (a cart alias, then draw.sprite), so
+    # resolution has to be idempotent or a path ends up doubled up.
+    scoped 'carts/ldtk' do
+      once = Console.asset 'maps/Level_0.ldtk'
+      assert_equal once, Console.asset(once)
+    end
+  end
+
+  test 'a missing asset points at the copy the cart should own' do
+    # Naming the cart's own path means the "not found" warning tells the author
+    # where to put the file instead of pointing at a shared location.
+    scoped 'carts/hello' do
+      assert_equal 'carts/hello/sprites/nope.png',
+                   Console.asset('sprites/nope.png')
+    end
+  end
+
+  # True when this checkout still has console-root art to borrow. A published
+  # build stages the cart alone, so there is no root to borrow from and the
+  # expectations below become the cart-local ones instead. Asserting the dev
+  # checkout unconditionally would make these tests fail in a shipped build.
+  def console_root_art?(path)
+    !DR.stat_file(path).nil?
+  end
+
+  test 'an asset only at the console root resolves, and is reported' do
+    scoped 'carts/hello' do
+      if console_root_art? 'sprites/dragon-0.png'
+        assert_equal 'sprites/dragon-0.png', Console.asset('sprites/dragon-0.png')
+        assert Console::Assets.shared?('sprites/dragon-0.png')
+        assert_includes Console.shared_assets, 'sprites/dragon-0.png'
+      else
+        assert_equal 'carts/hello/sprites/dragon-0.png',
+                     Console.asset('sprites/dragon-0.png')
+      end
+    end
+  end
+
+  test 'non-strings pass through untouched' do
+    scoped 'carts/hello' do
+      assert_equal :star, Console.asset(:star)
+      assert_equal 'http://example.com/a.png',
+                   Console.asset('http://example.com/a.png')
+    end
+  end
+
+  # The two properties that make carts independent: a cart's file shadows the
+  # console's copy of the same name, and a cart cannot see another cart.
+  test 'the cart copy wins over an identically named console file' do
+    scoped 'carts/selftest' do
+      assert_equal 'carts/selftest/sprites/star.png',
+                   Console.asset('sprites/star.png')
+    end
+  end
+
+  test 'a cart cannot reach another cart assets' do
+    scoped 'carts/selftest' do
+      Console::Sprites.index!
+      refute_equal 'carts/arcade/sprites/hero/idle/0.png',
+                   Console::Sprites.path('hero/idle/0')
+    end
+  end
+
+  test 'a cart still gets console starter art it does not own' do
+    scoped 'carts/arcade' do
+      Console::Sprites.index!
+      assert_equal 'carts/arcade/sprites/hero/idle/0.png',
+                   Console::Sprites.path('hero/idle/0')
+      # The second half needs a console root to fall back to; in a staged
+      # build the cart simply does not know the name, which is also correct.
+      if console_root_art? 'sprites/dragon-0.png'
+        assert_equal 'sprites/dragon-0.png', Console::Sprites.path('dragon-0')
+      end
+    end
+  end
+
+  test 'every cart ships an entry file the loader can require' do
+    loader = Console::CartLoader.new $args
+    found = loader.available
+    SHIPPED.each do |name|
+      assert_includes found, name
+      assert DR.stat_file(loader.cart_entry(name)),
+             "cart #{name} has no entry file at #{loader.cart_entry(name)}"
+    end
+    # A cart is a directory, never a loose .rb file.
+    refute_includes found, 'selftest.rb'
+  end
+end
+
+# Every path below is cart-relative in the source and cart-scoped in the
+# result: the selftest cart owns these files, and the console rewrites them to
+# real paths under carts/selftest. The console root holds a copy of star.png
+# too, which is what makes these tests prove isolation rather than just
+# resolution.
 class SpritesSuite
   include Console::Test
 
-  test 'index resolves a real asset under sprites/' do
+  test 'the cart copy of an asset wins over the console root' do
     Console::Sprites.index!
-    path = Console::Sprites.path :star
-    assert_equal 'sprites/star.png', path
+    assert_equal 'carts/selftest/sprites/star.png', Console::Sprites.path(:star)
   end
 
   test 'nested assets resolve by relative key' do
     Console::Sprites.index!
-    assert_equal 'sprites/misc/star.png', Console::Sprites.path('misc/star')
+    assert_equal 'carts/selftest/sprites/misc/star.png',
+                 Console::Sprites.path('misc/star')
   end
 
-  test 'a string path is passed straight through' do
-    assert_equal 'sprites/blue.png', Console::Sprites.path('sprites/blue.png')
+  test 'a cart-relative path resolves inside the cart' do
+    assert_equal 'carts/selftest/sprites/blue.png',
+                 Console::Sprites.path('sprites/blue.png')
   end
 
   test 'missing sprites fall back to solid and are reported' do
@@ -313,8 +444,11 @@ class DrawSuite
 
   test 'sprite uses the texture natural size when w/h are omitted' do
     reset
+    # A hand-written path is cart-relative, so the emitted primitive carries
+    # the cart's file and not a console-root one.
     Console.draw.sprite path: 'sprites/star.png', x: 0, y: 0
     prim = outputs.sprites.last
+    assert_equal 'carts/selftest/sprites/star.png', prim[:path]
     assert_equal 16, prim[:w]
     assert_equal 16, prim[:h]
   end
@@ -777,7 +911,7 @@ class AnimationSuite
     Console.anim.play e, :walk, kind: :sheet, sheet: 'sprites/star.png',
                        frame_count: 4, frame_w: 16, frame_h: 16, fps: 60
     props = Console.anim.primitive_props e
-    assert_equal 'sprites/star.png', props[:path]
+    assert_equal 'carts/selftest/sprites/star.png', props[:path]
     assert_equal 0, props[:source_x]
     assert_equal 16, props[:source_w]
   end
@@ -1143,7 +1277,8 @@ class RuntimeSuite
                   draw input ui spawn despawn each_entity animate sfx music
                   tween after every sprite auto_sprite debug
                   center overlaps? inside? percent strip row_at
-                  ui_store camera background rand_between]
+                  ui_store camera background rand_between
+                  asset assets_root shared_assets]
     missing = required.select { |m| !api.include?(m) }
     assert_equal 0, missing.size, "missing API methods: #{missing.join(', ')}"
   end

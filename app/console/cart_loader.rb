@@ -1,16 +1,21 @@
 # Console::CartLoader -- finds a cart, requires it, and starts the console.
 #
-# A "cart" is a single Ruby file under app/carts that defines one module (or
-# class) implementing the cart contract. Because only the selected cart is
-# required, a cart is genuinely a standalone program: nothing else in
-# app/carts/ is parsed at runtime, so a broken cart can never stop the console
-# from booting.
+# A "cart" is a directory under carts/ that defines one module (or class)
+# implementing the cart contract:
+#
+#   carts/space/
+#     app/space.rb        the cart: one module/class named after the directory
+#     sprites/            its own art
+#     sounds/  maps/  data/
+#
+# Only the selected cart is ever required, so a cart is genuinely a standalone
+# program: nothing else in carts/ is parsed at runtime, so a broken cart can
+# never stop the console from booting, and two carts can both have a
+# `sprites/hero.png` without seeing each other's.
 #
 # The contract is intentionally tiny. All of these hooks are optional:
 #
-#   def self.sprites   # { name => path }   sprite aliases
-#   def self.sfx      # { name => path }   sound effects
-#   def self.music    # { name => path }   music tracks
+#   def self.assets    # { sprites: {...}, sounds: {...}, music: {...} }
 #   def setup         # once, at boot
 #   def update        # every frame (when the cart defines no scenes)
 #   def render        # every frame, always last: use it for a HUD
@@ -20,9 +25,11 @@
 #   scene :title, TitleScene
 #
 # Every API method in Console::API is available as a bare call inside a cart.
+# Paths a cart writes are relative to its own directory -- `sprites/hero.png`
+# means carts/space/sprites/hero.png -- which Console::Assets resolves.
 module Console
   class CartLoader
-    CARTS_DIR = 'app/carts'
+    CARTS_DIR = 'carts'
     DEFAULT_CART = 'selftest'
 
     attr_reader :args, :errors
@@ -62,13 +69,26 @@ module Console
 
     # --- discovery --------------------------------------------------------
 
-    # Cart file names, without the .rb extension, sorted.
+    # A cart is a directory that holds an entry file of the same name.
+    def cart_dir(name)
+      "#{CARTS_DIR}/#{name}"
+    end
+
+    def cart_entry(name)
+      "#{cart_dir(name)}/app/#{name}.rb"
+    end
+
+    # Cart names, sorted. Only directories with an entry file count, so a
+    # half-created cart or a stray README in carts/ is simply not a cart.
     def available
       return [] unless DR.stat_file(CARTS_DIR)
       names = []
       DR.list_files(CARTS_DIR).each do |entry|
-        next unless entry.end_with?('.rb')
-        names << Console::Str.chop(entry, '.rb')
+        info = DR.stat_file "#{CARTS_DIR}/#{entry}"
+        next unless info
+        next unless info[:file_type] == :directory
+        next unless DR.stat_file(cart_entry(entry))
+        names << entry
       end
       names.sort
     end
@@ -116,9 +136,15 @@ module Console
       end
 
       @selected = name
-      path = "#{CARTS_DIR}/#{name}.rb"
+      path = cart_entry name
+
+      # Scope assets before anything is required. A cart may declare its assets
+      # at load time, and it must already be looking at its own directory.
+      Console::Assets.boot cart_dir(name)
+
       begin
         require path
+        require_cart_files name
       rescue => e
         abort_boot "could not require #{path}: #{e.class}: #{e.message}"
         return nil
@@ -144,13 +170,45 @@ module Console
       # is nothing to require -- and requiring a missing file would crash the
       # published build rather than report a clean skip.
       if switch?(:selftest) && !pinned?
-        require "#{CARTS_DIR}/selftest.rb"
-        summary = Console::Test.run @args
+        summary = run_selftest
         puts Console::Test.summary_line(summary)
         quit_now summary[:status] == 'PASS'
       end
 
       cart
+    end
+
+    # Require the rest of the cart's own top-level code files.
+    #
+    # A cart is allowed to be more than one file -- that is what app/ is for --
+    # and the entry file is always required first, so a cart can define things
+    # its siblings reference at load time. Only this cart's directory is read,
+    # which is the property that keeps one broken cart from taking the console
+    # down with it. Sub-directories are the cart's to require itself.
+    def require_cart_files(name)
+      dir = "#{cart_dir(name)}/app"
+      return unless DR.stat_file dir
+      entry = cart_entry name
+      extra = []
+      DR.list_files(dir).each do |file|
+        next unless file.end_with? '.rb'
+        path = "#{dir}/#{file}"
+        next if path == entry
+        extra << path
+      end
+      extra.sort.each { |p| require p }
+    end
+
+    # Run the built-in suites.
+    #
+    # The suites assert against asset files the selftest cart owns, so the
+    # asset scope moves to that cart even when a different one booted: a test
+    # that resolved a fixture against whichever cart happened to boot would
+    # quietly assert nothing useful.
+    def run_selftest
+      Console::Assets.boot cart_dir('selftest')
+      require cart_entry('selftest')
+      Console::Test.run @args
     end
 
     # A cart file may define a Class (hooks as instance methods) or a Module
@@ -222,16 +280,15 @@ module Console
 
     # Read a cart's title without requiring it: grep the source.
     def cart_title(name)
-      info = DR.stat_file "#{CARTS_DIR}/#{name}.rb"
+      info = DR.stat_file cart_entry(name)
       return nil unless info
-      source = DR.read_file "#{CARTS_DIR}/#{name}.rb"
+      source = DR.read_file cart_entry(name)
       return nil unless source
       Console::Str.quoted_value_after(source, 'TITLE')
     end
 
     def handle_test
-      require "#{CARTS_DIR}/selftest.rb"
-      summary = Console::Test.run @args
+      summary = run_selftest
       puts Console::Test.summary_line(summary)
       quit_now(summary[:status] == 'PASS')
     end

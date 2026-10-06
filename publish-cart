@@ -7,11 +7,17 @@
 #   ./publish-cart --list                  list carts and their publish titles
 #
 # dragonruby-publish packages a whole game directory, and this one holds every
-# cart under app/carts. Publishing it as-is would ship the selftest, the
-# widgets gallery and every other cart inside the arcade build. So this script
-# never points dragonruby-publish at ./ -- it stages a throwaway directory that
-# contains the console library, exactly one cart, and a main.rb that pins that
-# cart, then packages the staging directory instead.
+# cart under carts/. Publishing it as-is would ship the selftest, the widgets
+# gallery and every other cart inside the arcade build. So this script never
+# points dragonruby-publish at ./ -- it stages a throwaway directory that
+# contains the console library, exactly one cart directory (code and its own
+# sprites/sounds/maps/data), and a main.rb that pins that cart, then packages
+# the staging directory instead.
+#
+# Staging the cart wholesale is what makes the published build self-contained:
+# a cart that referenced art from the console root would find it missing here,
+# so verify_assets below refuses to package that rather than ship a game with
+# invisible sprites.
 #
 # The single-cart guarantee is enforced by verify_staging below, which reads
 # the staged directory back off disk rather than trusting the copy loop. It
@@ -25,7 +31,7 @@ cd "$(dirname "$0")"
 DIR=$(pwd)
 ROOT=$(dirname "$DIR")
 DRAGONRUBY_PUBLISH="$ROOT/dragonruby-publish"
-CARTS_DIR="app/carts"
+CARTS_DIR="carts"
 STAGE_ROOT="$ROOT/builds/cart-staging"
 
 die() {
@@ -34,20 +40,21 @@ die() {
 }
 
 # Cart names, sorted. Derived from the filesystem every run so a newly added
-# cart is publishable without touching this script.
+# cart is publishable without touching this script. A directory without an
+# entry file is not a cart.
 carts() {
-  ls "$CARTS_DIR"/*.rb 2>/dev/null | sed 's|.*/||; s|\.rb$||' | sort
+  ls "$CARTS_DIR"/*/app/*.rb 2>/dev/null | sed 's|.*/||; s|\.rb$||' | sort
 }
 
 cart_exists() {
-  ls "$CARTS_DIR/$1.rb" >/dev/null 2>&1
+  ls "$CARTS_DIR/$1/app/$1.rb" >/dev/null 2>&1
 }
 
 # A cart's TITLE constant, read without requiring it. Same trick --list uses,
 # so the published title and the listed title can never disagree.
 cart_title() {
   sed -n "s/^TITLE[[:space:]]*=[[:space:]]*['\"]\(.*\)['\"][[:space:]]*$/\1/p" \
-    "$CARTS_DIR/$1.rb" | head -1
+    "$CARTS_DIR/$1/app/$1.rb" | head -1
 }
 
 do_list() {
@@ -110,21 +117,15 @@ mkdir -p "$STAGE/app" "$STAGE/metadata"
 # 1. The console library. The cart is meaningless without it.
 cp -R app/console "$STAGE/app/console"
 
-# 2. Exactly one cart. Named explicitly so this loop cannot drift into
-#    "copy whatever is in app/carts".
-mkdir -p "$STAGE/app/carts"
-cp "$CARTS_DIR/$CART.rb" "$STAGE/app/carts/$CART.rb"
+# 2. Exactly one cart, whole. Copying the directory rather than picking files
+#    out of it is deliberate: the cart owns its sprites, sounds, maps and data,
+#    so those have to travel with it. Named explicitly, so this loop cannot
+#    drift into "copy whatever is in carts/".
+mkdir -p "$STAGE/carts"
+cp -R "$CARTS_DIR/$CART" "$STAGE/carts/$CART"
 
-# 3. Assets. Sprites are indexed recursively at boot and carts reference them by
-#    short name, so the whole tree comes along.
-[ -d sprites ] && cp -R sprites "$STAGE/sprites"
-[ -d sounds ] && cp -R sounds "$STAGE/sounds"
-
-# 3b. LDTK levels. A cart using Console::Map loads its level from disk at boot,
-# so a build without maps/ ships a game that warns and renders nothing.
-[ -d maps ] && cp -R maps "$STAGE/maps"
-
-# 4. Fonts, when the host checkout has them (DragonRuby ships its own).
+# 3. Fonts. DragonRuby reads these from the game root, so they cannot live
+#    inside a cart; the console ships its own copy for a standalone build.
 [ -f font.ttf ] && cp font.ttf "$STAGE/font.ttf"
 [ -f tiny.ttf ] && cp tiny.ttf "$STAGE/tiny.ttf"
 
@@ -187,7 +188,7 @@ RUBY
 # only. Deliberately independent of the copy above: if cp ever copied a
 # directory, or a stale file survived, this is what catches it.
 verify_staging() {
-  staged=$(ls "$STAGE/app/carts" 2>/dev/null | grep '\.rb$' | sed 's|\.rb$||' | sort)
+  staged=$(ls -d "$STAGE/carts"/*/ 2>/dev/null | sed 's|/$||; s|.*/||' | sort)
   count=$(printf '%s\n' "$staged" | grep -c . || true)
   expected="$CART"
 
@@ -202,6 +203,11 @@ verify_staging() {
     return 1
   fi
 
+  if [ ! -f "$STAGE/carts/$CART/app/$CART.rb" ]; then
+    echo "publish-cart: ABORT staged cart has no entry file" >&2
+    return 1
+  fi
+
   # The pin has to be in the entry point, or the build is merely a console
   # with one cart present rather than one that can only run that cart.
   if ! grep -q "pin('$CART')" "$STAGE/app/main.rb"; then
@@ -209,11 +215,16 @@ verify_staging() {
     return 1
   fi
 
-  # No other cart may be referenced from anywhere in the staged tree.
+  # No other cart may be requireable from anywhere in the staged tree.
+  #
+  # The directory check above already proves no other cart's code is *present*;
+  # this catches a cart reaching out and pulling one in. It matches require
+  # calls rather than the bare string, because the console library documents
+  # paths like 'carts/<name>/' in its own comments and those are not references.
   for other in $(carts); do
     [ "$other" = "$CART" ] && continue
-    if grep -rl "carts/$other" "$STAGE" >/dev/null 2>&1; then
-      echo "publish-cart: ABORT staged build references cart '$other'" >&2
+    if grep -rlE "require[[:space:]]+['\"]carts/$other/" "$STAGE" >/dev/null 2>&1; then
+      echo "publish-cart: ABORT staged build requires cart '$other'" >&2
       return 1
     fi
   done
@@ -222,7 +233,48 @@ verify_staging() {
   return 0
 }
 
+# Every asset the cart names has to be inside the staged cart.
+#
+# The staged build has no console-root art to fall back on -- that is the whole
+# point of staging -- so a path that does not resolve here is a file the cart
+# borrows from the console, and it would ship as an invisible sprite. Failing
+# here is the difference between "I forgot to move the art" and "the published
+# game is missing a texture nobody noticed".
+verify_assets() {
+  cart_dir="$STAGE/carts/$CART"
+  refs=$(grep -rhoE "['\"](sprites|sounds|maps|data)/[A-Za-z0-9_./-]+['\"]" \
+    "$cart_dir" 2>/dev/null | tr -d "'\"" | sort -u)
+
+  missing=""
+  for a in $refs; do
+    # Trailing slashes are directory probes, and a real directory satisfies them.
+    [ -e "$cart_dir/$a" ] || missing="$missing $a"
+  done
+
+  if [ -n "$missing" ]; then
+    echo "publish-cart: ABORT '$CART' uses assets it does not own:" >&2
+    for m in $missing; do
+      echo "    $m  (missing from $cart_dir)" >&2
+    done
+    echo "    move them into carts/$CART/, or the build will not have them" >&2
+    return 1
+  fi
+
+  [ -n "$refs" ] && echo "publish-cart: verified $CART owns its referenced assets"
+  return 0
+}
+
 verify_staging || die "refusing to package a build that is not single-cart"
+
+# The console's own diagnostic cart is exempt from the asset check: it names
+# paths deliberately, because it is the thing testing resolution -- files that
+# do not exist, files that live at the console root, and files another cart
+# owns. Every other cart is a game, and a game owns everything it references.
+if [ "$CART" = "selftest" ]; then
+  echo "publish-cart: '$CART' is the diagnostic cart; skipping the asset check"
+else
+  verify_assets || die "refusing to package a build with missing assets"
+fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
   echo ""

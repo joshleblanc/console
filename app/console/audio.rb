@@ -37,8 +37,11 @@ module Console
     # --- registration -----------------------------------------------------
 
     # teach the console where a sound lives
+    #
+    # The path is resolved against the booted cart, so `register :jump,
+    # 'sounds/jump.wav'` inside a cart means that cart's own file.
     def register(name, path)
-      @registry[name.to_s] = path
+      @registry[name.to_s] = Assets.resolve path
     end
 
     def register_all(hash)

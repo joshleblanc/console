@@ -16,9 +16,11 @@ DIR=$(pwd)
 DRAGONRUBY=$(dirname "$DIR")/dragonruby
 TICKS=${1:-300}
 
-CARTS=$(ls app/carts/*.rb 2>/dev/null | sed 's|app/carts/||; s|\.rb$||' | sort)
+# Cart names come from the entry files, so a directory without one is not a
+# cart -- the same rule Console::CartLoader#available applies.
+CARTS=$(ls carts/*/app/*.rb 2>/dev/null | sed 's|^carts/||; s|/app/.*||' | sort -u)
 if [ -z "$CARTS" ]; then
-  echo "smoke: no carts found in app/carts"
+  echo "smoke: no carts found in carts/"
   exit 1
 fi
 

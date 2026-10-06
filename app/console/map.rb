@@ -45,7 +45,12 @@ module Console
     # Load and parse an .ldtk file. Returns nil (with a console warning) when
     # the file is missing or unreadable, so a missing level degrades to a
     # visible warning rather than a boot crash.
+    #
+    # The path is resolved against the booted cart first, so a cart saying
+    # `load_map 'maps/Level_0.ldtk'` loads its own level, and the warning below
+    # names the file that was actually looked for.
     def self.load(path, options = {})
+      path = Assets.resolve path
       unless DR.stat_file(path)
         Console.warn "map not found: #{path}"
         return nil

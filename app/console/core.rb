@@ -104,6 +104,10 @@ module Console
   #       music:   { title: 'sounds/title.ogg' } }
   #   end
   #
+  # Every path is relative to the cart's own directory, so the example above is
+  # 'carts/space/sprites/hero.png' for a cart at carts/space -- see
+  # Console::Assets. Nothing here needs the cart's name to be hardcoded.
+  #
   # A single `assets` method rather than three, because names like `sfx` and
   # `music` are already taken by the playback API and a cart that declared
   # `def self.sfx` would silently shadow `sfx(:jump)`.
@@ -249,6 +253,35 @@ module Console
                 size_enum: -3,
                 color: Palette::COLORS[:warn]
     end
+  end
+
+  # --- assets ------------------------------------------------------------
+
+  # The booted cart's own directory ('carts/space'), or nil when no cart is
+  # booted.
+  def self.assets_root
+    Assets.root
+  end
+
+  # Turn a cart-relative path into a real one:
+  #
+  #   asset 'sprites/hero.png'   # => 'carts/space/sprites/hero.png'
+  #   asset 'data/level.json'    # => 'carts/space/data/level.json'
+  #
+  # The console resolves sprites, sounds, music, animation frames and maps on
+  # its own; use this for anything else it does not know about, such as
+  # DR.read_file on a JSON or CSV in your own data/ directory.
+  def self.asset(path)
+    Assets.resolve path
+  end
+
+  # Assets this cart is borrowing from the console root rather than owning.
+  #
+  # A published cart stages its own directory alone, so an empty list is what a
+  # cart wants: every entry is a file that will be missing from the build until
+  # it moves into the cart.
+  def self.shared_assets
+    Assets.shared_assets
   end
 
   # Resolve a sprite name to a renderable path.
@@ -556,6 +589,26 @@ module Console
 
     def toggle_mute
       Console.audio.toggle_mute
+    end
+
+    # --- assets -----------------------------------------------------------
+
+    # This cart's own directory, e.g. 'carts/space'. nil outside a cart.
+    def assets_root
+      Console.assets_root
+    end
+
+    # Resolve a cart-relative path to a real one:
+    #
+    #   asset 'data/level.json'    # => 'carts/space/data/level.json'
+    def asset(path)
+      Console.asset path
+    end
+
+    # Assets this cart is borrowing from the console root. Empty is the goal:
+    # a published cart ships its own directory alone.
+    def shared_assets
+      Console.shared_assets
     end
 
     # --- sprites ---------------------------------------------------------

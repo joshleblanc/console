@@ -203,6 +203,7 @@ module Console
         opts[:frame_count] ||= opts[:frames].size
         return opts
       elsif opts[:sheet]
+        opts[:sheet] = Assets.resolve opts[:sheet]
         opts[:kind] = :sheet
         opts[:frame_count] ||= opts[:frames]
         opts[:frame_w] ||= entity[:w]

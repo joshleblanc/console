@@ -1,10 +1,10 @@
 # The Cartridge Console
 
 A fantasy console for [DragonRuby](https://dragonruby.org): a small, opinionated
-library that turns a **cart** — one Ruby file — into a running game.
+library that turns a **cart** — one directory — into a running game.
 
 ```ruby
-# app/carts/space.rb
+# carts/space/app/space.rb
 TITLE = 'space rocks'
 
 class Space
@@ -81,7 +81,7 @@ On a headless machine, wrap the console in `xvfb-run -a`.
 ## Publishing a single cart
 
 `dragonruby-publish` packages a whole game directory, and this directory holds
-*every* cart under `app/carts`. Pointed at the console, it would ship the
+*every* cart under `carts/`. Pointed at the console, it would ship the
 selftest, the widgets gallery and the arcade cart all inside one build.
 
 So publish through `./publish-cart`, which stages a throwaway directory first:
@@ -94,9 +94,9 @@ So publish through `./publish-cart`, which stages a throwaway directory first:
 ```
 
 It stages `builds/cart-staging/<cart>/` containing the console library, the
-cart, the assets, metadata derived from the cart's `TITLE`, and an entry point
-that **pins** the cart — then packages that directory. Artifacts land in
-`../builds/`.
+cart directory (code *and* the sprites, sounds, maps and data it owns),
+metadata derived from the cart's `TITLE`, and an entry point that **pins** the
+cart — then packages that directory. Artifacts land in `../builds/`.
 
 Metadata comes from the cart itself, so the published title and `--list` can
 never disagree. These override the defaults:
@@ -113,9 +113,9 @@ Two independent checks, because "trust the copy loop" is how the wrong game
 gets published:
 
 1. **A script-side guard** reads the staged directory back off disk and refuses
-   to package unless it holds exactly one `.rb` cart, it is the requested one,
-   the generated `main.rb` pins it, and no other cart is referenced anywhere in
-   the tree. It exits non-zero rather than shipping a contaminated build.
+   to package unless it holds exactly one cart directory, it is the requested
+   one, the generated `main.rb` pins it, and nothing in the tree requires
+   another cart. It exits non-zero rather than shipping a contaminated build.
 
 2. **A runtime pin.** `Console::CartLoader#pin` makes the choice unrecoverable
    at runtime: the pin outranks `--cart` and `$CART`, and a pinned cart that is
@@ -124,6 +124,22 @@ gets published:
 
 Staging is rebuilt from scratch on every run, so a deleted cart cannot linger
 in a build.
+
+### Why a cart has to own its assets
+
+The staged build contains the cart directory and nothing else — no console-root
+starter art to fall back on. That makes a borrowed asset a file that is simply
+absent from the package, which is the kind of bug that only shows up on a
+device. So `publish-cart` also reads the staged cart's referenced asset paths
+back and refuses to package when one does not resolve inside it:
+
+```
+publish-cart: ABORT 'arcade' uses assets it does not own:
+    sprites/hero/idle/0.png  (missing from .../cart-staging/arcade/carts/arcade)
+    move them into carts/arcade/, or the build will not have them
+```
+
+`shared_assets` tells the same story from inside a running cart.
 
 > `dragonruby-publish` resolves a relative game directory against the
 > DragonRuby root it ships in, and fails to read metadata from an absolute one.
@@ -140,6 +156,7 @@ console/
 │   ├── console/             the library
 │   │   ├── core.rb          the Console object + the cart-facing API
 │   │   ├── cart_loader.rb   finds a cart, requires it, boots
+│   │   ├── assets.rb        resolves a cart-relative path to a real one
 │   │   ├── geom.rb          rect maths, top-down layout helpers
 │   │   ├── draw.rb          rendering helpers
 │   │   ├── input.rb         one action vocabulary
@@ -157,10 +174,15 @@ console/
 │   │   ├── body.rb          kinematic platformer body
 │   │   ├── testing.rb       the self-test harness
 │   │   └── version.rb       the console's version string
-│   └── carts/               one file per cart
-├── sprites/                 assets, discovered and indexed automatically
-├── maps/                    LDTK levels (maps/ is copied into a build)
-├── fixtures/                a sample .ldtk, used by the self test
+├── carts/                   one directory per cart
+│   └── space/
+│       ├── app/space.rb     the cart, plus any code files beside it
+│       ├── sprites/         its own art
+│       ├── sounds/          its own sounds and music
+│       ├── maps/            its own LDTK levels
+│       └── data/            anything else it reads
+├── sprites/                 console starter art: the fallback when a cart has
+│                            no file of its own
 ├── shots/                   screenshots written by --shot
 ├── run / run-test / smoke
 ├── publish-cart             package exactly one cart
@@ -171,15 +193,16 @@ console/
 
 ## The cart contract
 
-A cart is one file under `app/carts/`. Define a class (or a module) named after
-the file and implement whichever hooks you need. All of them are optional.
+A cart is a directory under `carts/`, and its entry file is `app/<name>.rb`.
+Define a class (or a module) named after the cart there, and implement whichever
+hooks you need. All of them are optional.
 
 ```ruby
 TITLE = 'my game'          # shown by --list
 
 class Mygame
-  # Optional: short names for assets. Anything under ./sprites is already
-  # reachable by name without this.
+  # Optional: short names for assets. Anything under the cart's own sprites/
+  # is already reachable by name without this.
   def self.assets
     { sprites: { hero: 'sprites/hero.png' },
       sounds:  { jump: 'sounds/jump.wav' },
@@ -191,6 +214,48 @@ class Mygame
   def render; end          # every frame, always last: use it for a HUD
 end
 ```
+
+### Paths are cart-relative
+
+Every path a cart writes is relative to **its own directory**:
+
+```ruby
+asset 'sprites/hero.png'   # => 'carts/mygame/sprites/hero.png'
+asset 'data/level.json'    # => 'carts/mygame/data/level.json'
+```
+
+This needs no ceremony anywhere else either: `self.assets`, `sprite`,
+`draw_sprite`, `animate ..., sheet:`, `load_map`, sounds and music all resolve
+the same way, because the console rewrites a path when it hands it to
+DragonRuby. So a cart never hardcodes its own name, and two carts can each have
+a `sprites/hero.png` without seeing each other's.
+
+There is exactly one fallback: a file that is not inside the cart is looked for
+at the console root, which is how the console ships starter art for a brand-new
+cart. Every borrow is logged at boot, and a cart can ask for the list:
+
+```ruby
+assets_root      # => 'carts/mygame'
+shared_assets    # => ['sprites/dragon-0.png']  borrowed, should be moved in
+```
+
+A cart that owns its assets has none — and that is the state you want before
+publishing, because `./publish-cart` stages the cart directory alone, so
+anything borrowed would simply be missing from the build.
+
+### More than one file
+
+The entry file is required first and the rest of `app/*.rb` follows, so a cart
+can be split up with no wiring:
+
+```
+carts/space/app/space.rb     # the cart
+carts/space/app/entities.rb  # required automatically
+```
+
+Sub-directories are the cart's own to require
+(`require 'carts/space/app/boss/boss'`). Only the booted cart's files are ever
+required, so a cart broken mid-edit cannot stop the console from starting.
 
 A cart with scenes uses them *instead of* `update`, and `render` still runs last:
 
@@ -345,6 +410,18 @@ entity_count(:enemy)
 draw_entity e            # resolves animation, tint, alpha, flips
 ```
 
+### Assets
+
+```ruby
+asset 'data/level.json'    # => 'carts/space/data/level.json'
+assets_root                # => 'carts/space'
+shared_assets              # => [] -- assets borrowed from the console root
+```
+
+The console resolves sprites, sounds, music, animation frames and maps for you;
+`asset` is for everything else, such as `DR.read_file` on your own data files.
+See [Paths are cart-relative](#paths-are-cart-relative).
+
 ### Animation
 
 Sprite animations are discovered from the filesystem: an entity of `kind: :hero`
@@ -376,9 +453,10 @@ auto_sprite :crate, 24, 24, :warn, :frame  # generate it if there is no file
 `:checker`, `:stripes`, `:frame`, `:circle`, `:ring`. Generated textures are real
 textures, addressable by symbol.
 
-Names come from the `./sprites` tree (indexed recursively at boot, so
-`sprites/misc/star.png` is reachable as `:'misc/star'` and `sprite(:star)`), plus
-anything registered through `self.assets`.
+Names come from the booted cart's own `sprites/` tree (indexed recursively at
+boot, so `sprites/misc/star.png` is reachable as `:'misc/star'` and
+`sprite(:star)`), plus anything registered through `self.assets`, plus the
+console's starter art as a fallback.
 
 ### Audio
 
@@ -545,10 +623,12 @@ sine(1.0, 0, 20)      # centred oscillation
 | `hello` | the smallest interesting cart; no assets, generated textures |
 | `arcade` | a playable MVP: scenes, waves, shooting, camera, shake, tweens, pause overlay, game over |
 | `widgets` | every UI widget, laid out as a live reference |
-| `ldtk` | LDTK end to end: loads a real `.ldtk`, spawns its entities, runs a body on its solids |
-| `selftest` | the console's own test suite |
+| `ldtk` | LDTK end to end: loads a real `.ldtk` from its own `maps/`, spawns its entities, runs a body on its solids |
+| `selftest` | the console's own test suite, with its fixtures |
 
-Screenshots of each live in `shots/` (regenerate with `--shot`).
+Each one owns the files it uses — `carts/arcade/sprites/`, `carts/ldtk/maps/`,
+`carts/selftest/fixtures/` — which is what makes them independent. Screenshots
+of each live in `shots/` (regenerate with `--shot`).
 
 ---
 
@@ -558,17 +638,18 @@ Screenshots of each live in `shots/` (regenerate with `--shot`).
 ./run-test
 ```
 
-165 tests / 1409 assertions, executed **inside the real DragonRuby runtime** —
+175 tests / 1435 assertions, executed **inside the real DragonRuby runtime** —
 against the real renderer, the real output collections and the real mruby build,
-not a stand-in. The suite covers geometry, strings, palettes, the sprite index
-and procedural generation, drawing and coordinate systems, tweens and easing,
-scenes, entities, animation, the camera, widgets, input, cart selection and
-pinning, LDTK loading, platformer collision, and the runtime wiring.
+not a stand-in. The suite covers geometry, strings, palettes, asset scoping and
+cart isolation, the sprite index and procedural generation, drawing and
+coordinate systems, tweens and easing, scenes, entities, animation, the camera,
+widgets, input, cart selection and pinning, LDTK loading, platformer collision,
+and the runtime wiring.
 
 It prints a machine-readable summary:
 
 ```
-CONSOLE_TEST_STATUS=PASS TESTS=165 ASSERTIONS=1409 FAILURES=0
+CONSOLE_TEST_STATUS=PASS TESTS=175 ASSERTIONS=1435 FAILURES=0
 ```
 
 `./smoke` additionally boots every cart headlessly and fails if any raises.

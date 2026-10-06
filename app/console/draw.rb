@@ -170,7 +170,13 @@ module Console
       path = spec[:path]
       # A Symbol that is not a generated texture is a sprite *name*; resolve it
       # so carts can write draw.sprite path: :hero without ceremony.
-      path = Sprites.path(path) if path.is_a?(Symbol) && !Sprites.generated?(path)
+      if path.is_a?(Symbol)
+        path = Sprites.path(path) unless Sprites.generated?(path)
+      elsif path.is_a?(String)
+        # A path written by hand is cart-relative, exactly as it is everywhere
+        # else in the API.
+        path = Assets.resolve path
+      end
       color = spec[:color]
       alpha = spec[:alpha]
       natural = natural_size(path, spec[:w], spec[:h])

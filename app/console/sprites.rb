@@ -3,8 +3,10 @@
 # Two jobs:
 #
 # 1. RESOLUTION. Carts refer to sprites by short name (`:star`,
-#    `:'misc/star'`) instead of by path. The index is built once by walking
-#    ./sprites recursively (DR.list_files is not recursive).
+#    `:'misc/star'`) instead of by path. The index is built once at boot by
+#    walking the sprites tree of the booted cart, then the console's own
+#    (DR.list_files is not recursive). The cart's files win, so two carts can
+#    both have a `sprites/hero.png` without colliding.
 #
 # 2. ZERO-ART PROTOTYPING. `auto` will synthesise a placeholder texture for any
 #    name that has no file, so a cart can be written and played before any art
@@ -14,7 +16,9 @@ module Console
   module Sprites
     extend self
 
-    ROOT = 'sprites'
+    # The logical directory art lives in. Every path built from it goes through
+    # Console::Assets, so it is a name and not a location.
+    ROOT = Assets::SPRITES_DIR
 
     class << self
       attr_reader :registry, :generated, :missing
@@ -28,9 +32,14 @@ module Console
     # --- indexing ---------------------------------------------------------
 
     # Build the name -> path index. Cheap enough to call once at boot.
+    #
+    # The cart's own tree is walked first, so a cart's `hero.png` shadows the
+    # console's; the console root is then walked as starter art. `||=` in walk
+    # is what makes "first one wins" true.
     def index!
       @registry = {}
       @indexed = false
+      walk "#{Assets.root}/#{ROOT}", '' if Assets.scoped?
       walk ROOT, ''
       @indexed = true
       self
@@ -61,8 +70,10 @@ module Console
     end
 
     # Register an explicit alias. Use this for names that should be short.
+    # A path is resolved against the booted cart, so `register :ship,
+    # 'sprites/hero/idle/0.png'` inside a cart means that cart's file.
     def register(name, path)
-      @registry[name.to_s] = path
+      @registry[name.to_s] = Assets.resolve path
     end
 
     # --- resolution -------------------------------------------------------
@@ -86,10 +97,10 @@ module Console
       end
       return key.to_sym if @generated[key]
 
-      # A string that already looks like a real asset path is passed through,
-      # so `draw_sprite('sprites/blue.png')` always works even if the index
-      # has not been built.
-      return key if key.include? '/'
+      # A string that already looks like a real asset path is resolved against the
+      # cart, so `draw_sprite('sprites/blue.png')` finds the cart's own copy
+      # even if the index has not been built.
+      return Assets.resolve key if key.include? '/'
 
       note_missing key
       :solid
@@ -137,9 +148,10 @@ module Console
     #
     # `sprites/hero/run/0.png .. 3.png` -> frames('hero/run')
     #
-    # Falls back to a single frame holding the base sprite.
+    # Falls back to a single frame holding the base sprite. The directory is
+    # resolved like every other asset, so this reads the booted cart's frames.
     def frames(group)
-      dir = "#{ROOT}/#{group}"
+      dir = Assets.resolve "#{ROOT}/#{group}"
       return [] unless DR.stat_file(dir)
       entries = DR.list_files(dir)
       pngs = []
