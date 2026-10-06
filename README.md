@@ -153,10 +153,14 @@ console/
 │   │   ├── ui.rb            widgets
 │   │   ├── palette.rb       colors and style defaults
 │   │   ├── str.rb           string helpers (mruby has no Regexp)
+│   │   ├── map.rb           LDTK level loading
+│   │   ├── body.rb          kinematic platformer body
 │   │   ├── testing.rb       the self-test harness
 │   │   └── version.rb       the console's version string
 │   └── carts/               one file per cart
 ├── sprites/                 assets, discovered and indexed automatically
+├── maps/                    LDTK levels (maps/ is copied into a build)
+├── fixtures/                a sample .ldtk, used by the self test
 ├── shots/                   screenshots written by --shot
 ├── run / run-test / smoke
 ├── publish-cart             package exactly one cart
@@ -406,6 +410,96 @@ end
 Everything inside `apply` is world space; everything outside is screen space.
 That is the usual split: world inside, HUD after.
 
+### Levels (LDTK)
+
+[LDTK](https://ldtk.io) is supported natively. Point the console at an `.ldtk`
+export and it spawns the entities and hands you the collision rects:
+
+```ruby
+map = load_map 'maps/Level_0.ldtk'
+spawn_level map                       # every entity, by kind
+body = body entity: @ship, gravity: 0.4
+
+def update
+  body.vx = input.axis_x * 4
+  body.jump 9 if input.pressed?(:accept) && body.grounded?
+  body.update map.solids
+end
+```
+
+Entities need no registration. The LDTK `__identifier` becomes the console
+`kind`, and its fields become attributes:
+
+```ruby
+map.entities_of('Enemy').first
+# { kind: :enemy, x: 64.0, y: 80.0, w: 16.0, h: 16.0,
+#   health: 3,          # an Int arrives as an Integer, not "3"
+#   label: 'boss',
+#   home_point: { x: 96.0, y: 112.0 },   # a Point field becomes x/y
+#   one_way: false }
+```
+
+Field identifiers are snake_cased, so LDTK's `MaxSpeed` becomes `:max_speed`.
+
+| Layer type | Becomes |
+|---|---|
+| `Entities` | entities in `map.entities` |
+| `IntGrid` | collision rects in `map.solids` (any non-zero cell) |
+| `Tiles` / `AutoLayer` | tile records in `map.tiles` (data only, not yet drawn) |
+
+Options: `level:` picks a level by identifier, `flip_y: false` keeps raw LDTK
+coordinates, `one_way_value: 2` marks pass-through cells, and
+`solid_entities: ['Platform']` turns chosen entities into solids instead.
+
+Two things this handles that a naive loader gets wrong:
+
+- **Coordinates.** LDTK is top-left with y growing *down*; the console is
+  bottom-left with y growing *up*. Positions are flipped on load, so a platform
+  near the top of the level ends up at a high `y`.
+- **Point fields.** A Point stores `cx`/`cy` and has *no* `value` key at all.
+  In mruby a missing key raises when chained into rather than returning nil, so
+  every field is read by branching on `__type`.
+
+### Bodies
+
+`Console::Body` is a kinematic platformer body — deliberately not a physics
+engine. There is no solver and no rigid bodies, because the games that want one
+need gravity, a floor and a wall, and that is a state machine.
+
+```ruby
+b = body x: 64, y: 400, w: 16, h: 24, gravity: 0.4
+
+b.grounded?        # standing on something right now
+b.landed?          # true on exactly ONE frame, the landing itself
+b.wall?            # touching a wall
+b.ceiling?         # head hit something
+b.wall_dir         # :left / :right, the side that stopped it
+b.floor            # the solid being stood on (for riding a moving platform)
+b.fall_distance    # how far it has fallen since leaving the ground
+b.jump 12          # set upward velocity; check grounded? yourself
+
+b.vx = input.axis_x * 4
+b.update map.solids
+```
+
+`gravity:` is a positive magnitude that pulls *down*, even though DragonRuby's
+bottom-left origin makes falling a negative `vy`.
+
+Solids are `{ x:, y:, w:, h: }` plus an optional `one_way:` flag, and they are
+static — moving platforms are left to the cart.
+
+Three details do the real work:
+
+- **Substepping.** A body falling for two seconds accumulates enough velocity to
+  cross a platform in one frame, where a single-frame overlap test reports no
+  collision and the body drops through the floor. Every move is split into steps
+  of at most 8px and each is fully resolved.
+- **Axis separation.** A wall clears `vx` but leaves `vy`, so the body slides
+  down the wall instead of sticking to it.
+- **Step-up.** `step_height: 16` lets the body walk over a low ledge instead of
+  stopping dead at it. Off by default, because auto-stepping lets a cart walk up
+  a wall it meant to be blocked by.
+
 ### Tweens and scheduling
 
 ```ruby
@@ -451,6 +545,7 @@ sine(1.0, 0, 20)      # centred oscillation
 | `hello` | the smallest interesting cart; no assets, generated textures |
 | `arcade` | a playable MVP: scenes, waves, shooting, camera, shake, tweens, pause overlay, game over |
 | `widgets` | every UI widget, laid out as a live reference |
+| `ldtk` | LDTK end to end: loads a real `.ldtk`, spawns its entities, runs a body on its solids |
 | `selftest` | the console's own test suite |
 
 Screenshots of each live in `shots/` (regenerate with `--shot`).
@@ -463,17 +558,17 @@ Screenshots of each live in `shots/` (regenerate with `--shot`).
 ./run-test
 ```
 
-122 tests / 1315 assertions, executed **inside the real DragonRuby runtime** —
+165 tests / 1409 assertions, executed **inside the real DragonRuby runtime** —
 against the real renderer, the real output collections and the real mruby build,
 not a stand-in. The suite covers geometry, strings, palettes, the sprite index
 and procedural generation, drawing and coordinate systems, tweens and easing,
 scenes, entities, animation, the camera, widgets, input, cart selection and
-pinning, and the runtime wiring.
+pinning, LDTK loading, platformer collision, and the runtime wiring.
 
 It prints a machine-readable summary:
 
 ```
-CONSOLE_TEST_STATUS=PASS TESTS=122 ASSERTIONS=1315 FAILURES=0
+CONSOLE_TEST_STATUS=PASS TESTS=165 ASSERTIONS=1409 FAILURES=0
 ```
 
 `./smoke` additionally boots every cart headlessly and fails if any raises.
@@ -487,6 +582,9 @@ against what mruby actually provides, and a few things are worth knowing because
 they shaped the design:
 
 - **No `Regexp`.** All string handling goes through `Console::Str`.
+- **`/` is always float division.** `181 / 20` is `9.05`, not `9` as in CRuby.
+  Any index or grid maths needs an explicit `.to_i`, or a level's tiles end up
+  each at a slightly different position.
 - **`outputs.solids` is deprecated.** Fills are emitted as sprites with
   `path: :solid`, which shares the sprite pipeline's texture caching.
 - **A trailing `key: value` list binds to the *first* optional parameter**, not

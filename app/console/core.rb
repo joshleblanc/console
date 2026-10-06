@@ -603,6 +603,31 @@ module Console
       Console::Geom.top y
     end
 
+    # --- levels -----------------------------------------------------------
+
+    # Load an LDTK level. Returns nil (with an on-screen warning) if the file
+    # is missing, so a bad level path is visible rather than a boot crash.
+    #
+    #   map = load_map 'maps/Level_0.ldtk'
+    #   map.spawn_all
+    #   @body = body entity: @ship, gravity: 0.4
+    def load_map(path, options = {})
+      Console::Map.load path, options
+    end
+
+    # Spawn every entity from a loaded level into the entity store.
+    def spawn_level(map, extra = {})
+      map.spawn_all extra
+    end
+
+    # --- bodies -----------------------------------------------------------
+
+    # A kinematic platformer body. Takes one options hash -- see the note on
+    # Console::Body about why a positional list would not survive mruby.
+    def body(options = {})
+      Console::Body.new options
+    end
+
     # --- misc ------------------------------------------------------------
 
     def on_enter(name, &block)

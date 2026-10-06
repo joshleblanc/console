@@ -1,0 +1,193 @@
+{
+  "jsonVersion": "1.5.3",
+  "appBuildId": 473051,
+  "iid": "fixture0000",
+  "worlds": [
+    {
+      "identifier": "FixtureWorld",
+      "iid": "fixture0001",
+      "worldGridWidth": 320,
+      "worldGridHeight": 160,
+      "defaultGridSize": 16,
+      "levels": [
+        {
+          "__bgColor": "#3A3F58",
+          "identifier": "Level_0",
+          "iid": "fixture0002",
+          "uid": 100,
+          "worldX": 0,
+          "worldY": 0,
+          "pxWid": 320,
+          "pxHei": 160,
+          "__bgPos": { "x": 0, "y": 0 },
+          "__smartColor": "#696A79",
+          "externalRelPath": null,
+          "fieldInstances": [],
+          "layerInstances": [
+            {
+              "__type": "IntGrid",
+              "__identifier": "Collision",
+              "iid": "fixture0003",
+              "__gridSize": 16,
+              "__cWid": 20,
+              "__cHei": 10,
+              "opacity": 1,
+              "intGridCsv": [
+                0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+              ],
+              "gridTiles": [],
+              "autoLayerTiles": []
+            },
+            {
+              "__type": "Entities",
+              "__identifier": "Entities",
+              "iid": "fixture0004",
+              "__gridSize": 16,
+              "__cWid": 20,
+              "__cHei": 10,
+              "opacity": 1,
+              "entityInstances": [
+                {
+                  "__identifier": "Enemy",
+                  "iid": "fixture0005",
+                  "defUid": 1,
+                  "width": 16,
+                  "height": 16,
+                  "px": [64, 64],
+                  "__grid": [4, 4],
+                  "__worldX": 64,
+                  "__worldY": 64,
+                  "__tags": ["floating"],
+                  "fieldInstances": [
+                    {
+                      "__identifier": "Health",
+                      "__type": "Int",
+                      "value": 3,
+                      "defUid": 10,
+                      "realEditorValues": []
+                    },
+                    {
+                      "__identifier": "Speed",
+                      "__type": "Float",
+                      "value": 1.5,
+                      "defUid": 11,
+                      "realEditorValues": []
+                    },
+                    {
+                      "__identifier": "Label",
+                      "__type": "String",
+                      "value": "boss",
+                      "defUid": 12,
+                      "realEditorValues": []
+                    },
+                    {
+                      "__identifier": "Dead",
+                      "__type": "Bool",
+                      "value": false,
+                      "defUid": 13,
+                      "realEditorValues": []
+                    },
+                    {
+                      "__identifier": "Tags",
+                      "__type": "String",
+                      "value": "a,b,c",
+                      "defUid": 14,
+                      "realEditorValues": []
+                    },
+                    {
+                      "__identifier": "HomePoint",
+                      "__type": "Point",
+                      "cx": 96.0,
+                      "cy": 112.0,
+                      "defUid": 15,
+                      "realEditorValues": []
+                    },
+                    {
+                      "__identifier": "Empty",
+                      "__type": "Point",
+                      "defUid": 16,
+                      "realEditorValues": []
+                    }
+                  ]
+                },
+                {
+                  "__identifier": "Coin",
+                  "iid": "fixture0006",
+                  "defUid": 2,
+                  "width": 8,
+                  "height": 8,
+                  "px": [128, 32],
+                  "__grid": [8, 2],
+                  "__worldX": 128,
+                  "__worldY": 32,
+                  "__tags": [],
+                  "fieldInstances": [
+                    {
+                      "__identifier": "Value",
+                      "__type": "Int",
+                      "value": 10,
+                      "defUid": 20,
+                      "realEditorValues": []
+                    }
+                  ]
+                },
+                {
+                  "__identifier": "Platform",
+                  "iid": "fixture0007",
+                  "defUid": 3,
+                  "width": 48,
+                  "height": 8,
+                  "px": [160, 96],
+                  "__grid": [10, 6],
+                  "__worldX": 160,
+                  "__worldY": 96,
+                  "__tags": [],
+                  "fieldInstances": [
+                    {
+                      "__identifier": "OneWay",
+                      "__type": "Bool",
+                      "value": true,
+                      "defUid": 30,
+                      "realEditorValues": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "__type": "Tiles",
+              "__identifier": "Ground",
+              "iid": "fixture0008",
+              "__gridSize": 16,
+              "__cWid": 20,
+              "__cHei": 10,
+              "opacity": 1,
+              "gridTiles": [
+                { "px": [0, 144], "src": [0, 0], "f": 0, "t": 1, "d": [0] },
+                { "px": [16, 144], "src": [16, 0], "f": 0, "t": 1, "d": [0] }
+              ],
+              "autoLayerTiles": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "defs": {
+    "layers": [],
+    "entities": [],
+    "tilesets": {},
+    "enums": null,
+    "externalEnums": null,
+    "levelFields": []
+  }
+}

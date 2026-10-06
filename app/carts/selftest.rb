@@ -1175,3 +1175,417 @@ class Selftest
     ui.hud
   end
 end
+# ---------------------------------------------------------------------------
+# Console::Map -- LDTK loading.
+#
+# The fixture is a trimmed but structurally real .ldtk export: a world holding
+# one level, an IntGrid collision layer, an entity layer with all the field
+# types that behave differently, and a tile layer.
+#
+# It deliberately includes a Point field WITH cx/cy and a Point field WITHOUT
+# any, because those are the two cases that break a naive loader: the first has
+# no 'value' key at all, and the second has no 'value' and no cx/cy.
+# ---------------------------------------------------------------------------
+class MapSuite
+  include Console::Test
+
+  FIXTURE = 'fixtures/sample.ldtk'
+
+  def map(options = {})
+    Console::Map.load FIXTURE, options
+  end
+
+  test 'loads a level out of an ldtk export' do
+    m = map
+    assert_not_nil m
+    assert_equal 'Level_0', m.identifier
+    assert_equal 320.0, m.width
+    assert_equal 160.0, m.height
+  end
+
+  test 'missing map warns and returns nil rather than crashing' do
+    assert_nil Console::Map.load('fixtures/definitely_not_here.ldtk')
+  end
+
+  test 'entity identifier becomes the console kind' do
+    m = map
+    # 'Enemy' -> :enemy, with no naming from the cart at all.
+    assert_equal [:coin, :enemy, :platform], m.entities.map { |e| e[:kind] }.sort
+  end
+
+  test 'entity position and size come from ldtk' do
+    enemy = map.entities_of('Enemy').first
+    assert_equal 64.0, enemy[:x]
+    assert_equal 16.0, enemy[:w]
+    assert_equal 16.0, enemy[:h]
+  end
+
+  test 'ldtk y is flipped into console bottom-left space' do
+    m = map
+    enemy = m.entities_of('Enemy').first
+    # LDTK puts the enemy at y=64 counting DOWN from a 160px level, and the
+    # entity is 16 tall, so its bottom edge in console space is 160-64-16=80.
+    assert_equal 80.0, enemy[:y]
+  end
+
+  test 'flip_y false keeps raw ldtk coordinates' do
+    enemy = map(flip_y: false).entities_of('Enemy').first
+    assert_equal 64.0, enemy[:y]
+  end
+
+  test 'primitive field types survive parsing with their types intact' do
+    enemy = map.entities_of('Enemy').first
+    # The whole point of typed fields: an Int arrives as an Integer, not "3".
+    assert_equal 3, enemy[:health]
+    assert_equal Integer, enemy[:health].class
+    assert_equal 1.5, enemy[:speed]
+    assert_equal Float, enemy[:speed].class
+    assert_equal 'boss', enemy[:label]
+    assert_equal false, enemy[:dead]
+  end
+
+  test 'field identifiers are snake_cased' do
+    enemy = map.entities_of('Enemy').first
+    assert_equal 3, enemy[:health]      # Health
+    assert_equal 10, map.entities_of('Coin').first[:value] # Value
+  end
+
+  test 'a Point field with coordinates becomes an x/y hash' do
+    enemy = map.entities_of('Enemy').first
+    assert_equal({ x: 96.0, y: 112.0 }, enemy[:home_point])
+  end
+
+  test 'an empty Point field is dropped rather than stored as nil' do
+    # This is the trap. A Point has no 'value' key at all, so a loader that
+    # reads f['value'] gets nil, and in mruby an absent key RAISES when chained
+    # into. Storing nil would also shadow the cart's own spawn default.
+    enemy = map.entities_of('Enemy').first
+    refute_includes enemy.keys, :empty
+    assert_not_nil enemy[:health]
+  end
+
+  test 'field_value never raises on a point without cx/cy' do
+    field = { '__identifier' => 'Empty', '__type' => 'Point' }
+    assert_nil Console::Map.field_value(field)
+  end
+
+  test 'field_value handles every primitive type through value' do
+    %w[Int Float String Bool].each do |type|
+      assert_equal 7, Console::Map.field_value({ '__type' => type, 'value' => 7 })
+    end
+  end
+
+  test 'intgrid non-zero cells become solid rects' do
+    m = map
+    # The fixture's bottom row is solid across all 20 columns.
+    assert_equal 20, m.solids.size
+    first = m.solids.first
+    assert_equal 0.0, first[:x]
+    assert_equal 0.0, first[:y]
+    assert_equal 16.0, first[:w]
+    assert_equal 16.0, first[:h]
+  end
+
+  test 'intgrid rows are flipped into console space' do
+    # Row 9 (the last) is the bottom row of the level, so in console space it
+    # must sit at y=0 -- not at y=144, which is where LDTK counts it from.
+    assert_equal 0.0, m_solids_bottom_y
+  end
+
+  def m_solids_bottom_y
+    map.solids.map { |s| s[:y] }.min
+  end
+
+  test 'one_way_value marks pass-through cells' do
+    m = map(one_way_value: 1)
+    assert_equal true, m.solids.first[:one_way]
+    # Without the option they are ordinary solids.
+    assert_equal false, map.solids.first[:one_way]
+  end
+
+  test 'entity-level one_way flag is carried through' do
+    platform = map.entities_of('Platform').first
+    assert_equal true, platform[:one_way]
+  end
+
+  test 'solid_entities option turns entities into solids' do
+    plain = map
+    m = map(solid_entities: ['Platform'])
+    refute_includes m.entities_of('Platform').map { |e| e[:kind] }, :platform
+    # The Platform moved out of `entities`, and one extra solid appeared.
+    assert_equal plain.entities.size - 1, m.entities.size
+    assert_equal plain.solids.size + 1, m.solids.size
+  end
+
+  test 'tiles are collected with console-space positions' do
+    m = map
+    assert_equal 2, m.tiles.size
+    # src=[0,0] px=[0,144] in a 160px level, 16px tiles -> console y = 0.
+    assert_equal([0.0, 0.0], m.tiles.first[:px])
+  end
+
+  test 'entities_of accepts either ldtk or console spelling' do
+    m = map
+    assert_equal 1, m.entities_of('Enemy').size
+    assert_equal 1, m.entities_of(:enemy).size
+    assert_equal 1, m.entities_of('enemy').size
+  end
+
+  test 'spawn_all pushes entities into the store with their kinds' do
+    m = map
+    before = Console.entities.count(:enemy)
+    created = m.spawn_all
+    assert_equal 3, created.size
+    assert_equal before + 1, Console.entities.count(:enemy)
+    created.each { |e| Console.entities.despawn e }
+  end
+
+  test 'to_s is informative and does not raise' do
+    assert_not_nil map.to_s
+  end
+end
+
+# ---------------------------------------------------------------------------
+# Console::Body -- kinematic platformer movement.
+#
+# Solids are written out by hand rather than loaded from the map so that every
+# expected number is checkable on paper.
+# ---------------------------------------------------------------------------
+class BodySuite
+  include Console::Test
+
+  def solid(x, y, w, h, one_way = false)
+    { x: x.to_f, y: y.to_f, w: w.to_f, h: h.to_f, one_way: one_way }
+  end
+
+  # A floor spanning the whole width at the bottom of a 200px world.
+  def floor_solids
+    [solid(0, 0, 200, 16)]
+  end
+
+  test 'a body falls under gravity and comes to rest on the floor' do
+    b = Console::Body.new(x: 50, y: 100, w: 16, h: 16, gravity: 1.0)
+    100.times { b.update floor_solids }
+    assert b.grounded?
+    # Resting exactly on top of the floor: y == floor top (0 + 16).
+    assert_equal 16.0, b.y
+    assert_equal 0.0, b.vy
+  end
+
+  test 'gravity is a positive magnitude that pulls down' do
+    # Bottom-left origin, so falling means y DECREASES.
+    b = Console::Body.new(x: 50, y: 100, w: 16, h: 16, gravity: 1.0)
+    y_before = b.y
+    b.update []
+    assert b.y < y_before
+    assert b.vy < 0
+  end
+
+  test 'landed? fires on exactly one frame, not on every resting frame' do
+    b = Console::Body.new(x: 50, y: 100, w: 16, h: 16, gravity: 1.0)
+    landings = 0
+    150.times do
+      b.update floor_solids
+      landings += 1 if b.landed?
+    end
+    # This is the edge-trigger that makes `if body.landed?` safe to write.
+    assert_equal 1, landings
+  end
+
+  test 'max_fall clamps terminal velocity' do
+    b = Console::Body.new(x: 50, y: 190, w: 16, h: 16,
+                          gravity: 1.0, max_fall: 6.0)
+    60.times { b.update [] }
+    assert b.vy >= -6.0
+  end
+
+  test 'a wall stops horizontal motion and snaps flush' do
+    wall = [solid(100, 0, 16, 200)]
+    b = Console::Body.new(x: 50, y: 100, w: 16, h: 16, gravity: 0.0)
+    10.times do
+      b.vx = 10
+      b.update wall
+    end
+    assert b.wall?
+    assert_equal :right, b.wall_dir
+    # flush against the wall's left face: 100 - 16
+    assert_equal 84.0, b.x
+    assert_equal 0.0, b.vx
+  end
+
+  test 'a body slides down a wall instead of sticking to it' do
+    # The reason collision resolves one axis at a time: a wall zeroes vx but
+    # leaves vy alone, so gravity keeps pulling and the body slides.
+    wall = [solid(100, 60, 16, 60)]
+    b = Console::Body.new(x: 80, y: 100, w: 16, h: 16, gravity: 1.0)
+    y_before = b.y
+    3.times do
+      b.vx = 10
+      b.update wall
+    end
+    assert b.wall?
+    assert_equal 0.0, b.vx
+    assert b.y < y_before
+  end
+
+  test 'a fast body does not tunnel through a thin floor' do
+    # The case that justifies substepping. In ONE frame at vy = -200 the body
+    # would cross a 16px floor entirely, a single-frame overlap test would
+    # report nothing, and the body would land underneath the world -- which
+    # looks like a gameplay bug rather than a physics one.
+    b = Console::Body.new(x: 50, y: 100, w: 16, h: 16, gravity: 0.0)
+    b.vy = -200.0
+    b.update floor_solids
+    assert b.grounded?
+    assert_equal 16.0, b.y
+    assert b.y > 0, 'body must not have passed through the floor'
+  end
+
+  test 'a wall stops the body when step-up is disabled' do
+    # The default. Auto-stepping lets a cart walk up a wall it meant to be
+    # blocked by, so it is opt-in.
+    step = [solid(0, 0, 200, 16), solid(100, 16, 16, 16)]
+    b = Console::Body.new(x: 80, y: 16, w: 16, h: 16, gravity: 1.0)
+    40.times do
+      b.vx = 2
+      b.update step
+    end
+    assert_equal 84.0, b.x
+    assert_equal 16.0, b.y
+  end
+
+  test 'a body steps over a low ledge when step_height allows it' do
+    # Floor plus a 16px step. With step-up the body lifts onto the step rather
+    # than stopping dead against its face.
+    step = [solid(0, 0, 200, 16), solid(100, 16, 16, 16)]
+    b = Console::Body.new(x: 80, y: 16, w: 16, h: 16,
+                          gravity: 1.0, step_height: 16.0)
+    40.times do
+      b.vx = 2
+      b.update step
+    end
+    # Walking right, fully past the 16px step (which spans x=100..116).
+    assert b.x > 116, "expected to clear the step, stuck at x=#{b.x}"
+    # The step is a bump on a full-width floor, so having walked over it the
+    # body correctly settles back onto the floor rather than staying raised.
+    assert_equal 16.0, b.y
+  end
+
+  test 'step-up does not trigger for a wall taller than step_height' do
+    wall = [solid(0, 0, 200, 16), solid(100, 16, 16, 100)]
+    b = Console::Body.new(x: 80, y: 16, w: 16, h: 16,
+                          gravity: 1.0, step_height: 8.0)
+    30.times do
+      b.vx = 2
+      b.update wall
+    end
+    assert_equal 84.0, b.x
+  end
+
+  test 'jumping sets upward velocity and clears grounded' do
+    b = Console::Body.new(x: 50, y: 100, w: 16, h: 16, gravity: 1.0)
+    100.times { b.update floor_solids }
+    assert b.grounded?
+    b.jump 10
+    assert_equal 10.0, b.vy
+    b.update floor_solids
+    assert_equal false, b.grounded?
+  end
+
+  test 'rising into a ceiling stops upward motion' do
+    ceil = [solid(0, 100, 200, 16)]
+    b = Console::Body.new(x: 50, y: 16, w: 16, h: 16, gravity: 0.0)
+    b.jump 200
+    # One frame: these flags describe the frame that just resolved, and are
+    # cleared at the start of the next one.
+    b.update ceil
+    assert b.ceiling?
+    # Head stops flush under the ceiling: 100 - 16.
+    assert_equal 84.0, b.y
+    assert_equal 0.0, b.vy
+  end
+
+  test 'one_way solids are pass-through from below' do
+    plat = [solid(0, 60, 200, 8, true)]
+    b = Console::Body.new(x: 50, y: 16, w: 16, h: 16, gravity: 0.0)
+    b.jump 200
+    b.update plat
+    # Above the platform (60 + 8 = 68) without being stopped by it.
+    assert b.y > 68, "expected to pass through, stopped at y=#{b.y}"
+    assert_equal false, b.grounded?
+  end
+
+  test 'one_way solids still catch a falling body from above' do
+    plat = [solid(0, 60, 200, 8, true)]
+    b = Console::Body.new(x: 50, y: 120, w: 16, h: 16, gravity: 1.0)
+    60.times { b.update plat }
+    assert b.grounded?
+    assert_equal 68.0, b.y
+  end
+
+  test 'a one_way platform does not block a body already below it' do
+    plat = [solid(0, 60, 200, 8, true)]
+    b = Console::Body.new(x: 50, y: 10, w: 16, h: 16, gravity: 1.0)
+    60.times { b.update plat }
+    # Fell straight past it and kept going.
+    assert_equal false, b.grounded?
+    assert b.y < 60
+  end
+
+  test 'a body can jump back up through its own one_way platform' do
+    plat = [solid(0, 60, 200, 8, true)]
+    b = Console::Body.new(x: 50, y: 120, w: 16, h: 16, gravity: 1.0)
+    60.times { b.update plat }
+    assert b.grounded?
+    assert_equal 68.0, b.y
+    b.jump 40
+    b.update plat
+    # The only way to get above the platform is to have passed up through it.
+    assert b.y > 68, "expected to pass up through, stopped at y=#{b.y}"
+  end
+
+  test 'body binds to an entity and writes movement back to it' do
+    entity = { x: 50, y: 100, w: 16, h: 16, kind: :hero }
+    b = Console::Body.new(entity: entity, gravity: 1.0)
+    assert_equal 16.0, b.w
+    100.times { b.update floor_solids }
+    assert_equal b.y, entity[:y]
+    assert_equal 16.0, entity[:y]
+  end
+
+  test 'friction damps horizontal speed' do
+    b = Console::Body.new(x: 50, y: 100, w: 16, h: 16,
+                          gravity: 0.0, friction: 0.5)
+    b.vx = 10
+    b.update []
+    assert_equal 5.0, b.vx
+  end
+
+  test 'friction defaults to leaving velocity alone' do
+    b = Console::Body.new(x: 50, y: 100, w: 16, h: 16, gravity: 0.0)
+    b.vx = 10
+    b.update []
+    assert_equal 10.0, b.vx
+  end
+
+  test 'fall_distance resets on landing' do
+    b = Console::Body.new(x: 50, y: 100, w: 16, h: 16, gravity: 1.0)
+    10.times { b.update [] }
+    assert b.fall_distance > 0
+    200.times { b.update floor_solids }
+    assert_equal 0.0, b.fall_distance
+  end
+
+  test 'an empty solid list is not an error' do
+    b = Console::Body.new(x: 0, y: 0, w: 16, h: 16, gravity: 1.0)
+    b.update nil
+    b.update []
+    assert_equal false, b.grounded?
+  end
+
+  test 'body exposes a drawable entity even when unbound' do
+    b = Console::Body.new(x: 10, y: 20, w: 16, h: 16)
+    assert_equal 10.0, b.entity[:x]
+    assert_equal :body, b.entity[:kind]
+  end
+end
