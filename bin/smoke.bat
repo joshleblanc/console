@@ -14,9 +14,9 @@ rem  with ./smoke.
 rem ============================================================================
 setlocal enabledelayedexpansion
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 if errorlevel 1 (
-  echo smoke.bat: could not enter %~dp0 1>&2
+  echo smoke.bat: could not enter %~dp0.. 1>&2
   exit /b 1
 )
 

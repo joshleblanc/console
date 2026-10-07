@@ -7,7 +7,7 @@
 #
 # Cart selection, in priority order:
 #
-#   1. --cart <name>        ./run --cart hello
+#   1. --cart <name>        ./bin/run --cart hello
 #   2. CART=<name> env var
 #   3. the FIRST cart found in carts/ (so a fresh checkout always runs)
 #

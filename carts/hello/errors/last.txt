@@ -1,0 +1,2 @@
+* EXCEPTION: app/main.rb not found.
+** Backtrace:

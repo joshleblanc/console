@@ -3,7 +3,7 @@
 # A gallery of everything the UI toolkit can draw, laid out from the top of
 # the screen. Useful as a live reference while styling a cart.
 #
-#   ./run --cart widgets
+#   ./bin/run --cart widgets
 #
 # Keyboard: TAB is not mapped, so use the arrow keys / dpad to move between
 # rows, SPACE or gamepad A to activate, ESC to unfocus a slider.

@@ -24,9 +24,9 @@ rem  NOTE: written by hand and reviewed, not executed. See README.md.
 rem ============================================================================
 setlocal enabledelayedexpansion
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 if errorlevel 1 (
-  echo publish-cart.bat: could not enter %~dp0 1>&2
+  echo publish-cart.bat: could not enter %~dp0.. 1>&2
   exit /b 1
 )
 

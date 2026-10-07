@@ -48,7 +48,7 @@ module Console
 
     # Pin the loader to exactly one cart.
     #
-    # This is how a published single-cart build boots: ./publish-cart stages a
+    # This is how a published single-cart build boots: ./bin/publish-cart stages a
     # directory holding one cart and an entry point that pins it, so the cart
     # cannot be swapped at runtime.
     #
@@ -322,7 +322,7 @@ module Console
         puts "  #{n}#{mark}#{title ? "  -- #{title}" : ''}"
       end
       puts ''
-      puts "Run one with:  ./run #{CARTS_DIR}/<name>"
+      puts "Run one with:  ./bin/run #{CARTS_DIR}/<name>"
       quit_now
     end
 

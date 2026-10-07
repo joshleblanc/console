@@ -4,10 +4,10 @@
 # and run a body against the solids it yields -- those harvested from the
 # IntGrid layer, plus every entity that declares itself solid in the map.
 #
-#   ./run --cart ldtk
+#   ./bin/run --cart ldtk
 #
 # It exists partly as a demo and partly as a canary -- it is the one cart that
-# exercises Console::Map and Console::Body together, so `./smoke` fails if a
+# exercises Console::Map and Console::Body together, so `./bin/smoke` fails if a
 # change to either breaks the real loading path rather than just the unit
 # tests.
 TITLE = 'ldtk pipeline'

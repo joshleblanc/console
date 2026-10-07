@@ -26,7 +26,7 @@ end
 ```
 
 ```sh
-./run --cart space
+./bin/run --cart space
 ```
 
 That is the whole idea. No pixel editor, no sound chip editor — just a small API
@@ -44,15 +44,15 @@ The console is an ordinary DragonRuby game directory.
 ```sh
 cd console
 
-./run                  # boot the default cart
-./run carts/hello      # boot a cart by path
-./run hello            # ...or by name (shorthand for carts/hello)
-./run --cart hello     # the explicit switch form
-./run --list           # what carts exist in the gallery
-./run --hud            # start with the debug overlay on
+./bin/run                  # boot the default cart
+./bin/run carts/hello      # boot a cart by path
+./bin/run hello            # ...or by name (shorthand for carts/hello)
+./bin/run --cart hello     # the explicit switch form
+./bin/run --list           # what carts exist in the gallery
+./bin/run --hud            # start with the debug overlay on
 
-./run-test             # run the self test (exits non-zero on failure)
-./smoke                # boot every cart headlessly and report failures
+./bin/run-test             # run the self test (exits non-zero on failure)
+./bin/smoke                # boot every cart headlessly and report failures
 ```
 
 A cart is a **path to a cart directory**, and `carts/` is just the default
@@ -60,7 +60,7 @@ gallery. Any directory inside the console works — `games/space`,
 `demos/space`, `carts/space` — and a bare name is shorthand for `carts/<name>`:
 
 ```sh
-./run games/space          # a cart that does not live in carts/
+./bin/run games/space          # a cart that does not live in carts/
 ```
 
 The cart's name is the last segment of that path, and it is also the module the
@@ -77,7 +77,7 @@ see [Publishing a single cart](#publishing-a-single-cart). To debug one scene of
 game without playing through the front door:
 
 ```sh
-./run carts/arcade --scene play
+./bin/run carts/arcade --scene play
 ```
 
 ### Switches
@@ -99,16 +99,104 @@ On a headless machine, wrap the console in `xvfb-run -a`.
 
 ---
 
+## Dragonstation: installing and publishing
+
+Dragonstation is a site where carts run: upload a cart directory and it plays
+in the browser, against a copy of this library. Two scripts close the loop in
+this direction.
+
+**Installing the console.** The site serves the console it runs as a plain ZIP,
+with no login, because it already hands every byte of it to any browser playing a
+cart:
+
+```sh
+# a fresh console
+curl -O http://localhost:3000/console/library.zip
+unzip library.zip -d console
+
+# ...or refresh this one
+./bin/update-library --site=http://localhost:3000
+```
+
+The download is the whole console -- this `app/`, this `bin/`, the starter art,
+the metadata, and a `carts/` directory to put a cart in -- not just the library,
+so it unpacks into a console that boots. It compares versions and does nothing
+unless the site is serving something newer than the `MAJOR/MINOR/PATCH` in
+`app/console/version.rb`. Everything is unpacked to a scratch directory and
+verified before it is moved into place, so a truncated download cannot leave this
+console with half a library.
+
+The ZIP carries Unix modes, so `unzip` gives you runnable scripts. A tool that
+ignores them (`python3 -m zipfile`) will not, and `chmod +x bin/*` once fixes
+that.
+
+**Publishing a cart.** With the library downloaded from the site signed in, the
+same download carries a file called `dragonstation.json`:
+
+```json
+{ "api_key": "ds_...", "publish_url": "https://.../api/carts", "site_url": "https://..." }
+```
+
+That file is this console's credential, and `./bin/publish-site` spends it:
+
+```sh
+./bin/publish-site --list            # what could be sent
+./bin/publish-site arcade            # send carts/arcade
+./bin/publish-site arcade --dry-run  # build it and check the key, send nothing
+```
+
+The cart arrives on the site as a **draft** under your account. Nothing goes
+public because a script ran — you play it there, then publish it from its page.
+Everything the site's upload form refuses, this refuses too, and says why:
+traversal, symlinks, expansion bombs, and art a cart names but does not own.
+
+### Releasing a new console version
+
+Administrators only. The same install the site's upload screen performs, driven
+from here:
+
+```sh
+./bin/publish-console --dry-run   # build the archive, send nothing
+./bin/publish-console             # install console 0.2.0 as a new version
+```
+
+Bump `MAJOR`/`MINOR`/`PATCH` in `app/console/version.rb` first. The site reads
+the version from that same file and refuses one it already has, because a
+cartridge pinned to 0.1.0 has to keep running against 0.1.0 forever.
+
+**A version is a console, not a checkout.** The archive carries the library,
+the entry point, every script, the starter art and a `carts/` directory with a
+README in it -- and none of this machine: no `.git`, no `builds/`, no `shots/`,
+no `errors/last.txt`, no carts, and not the publishing key sitting in this
+directory. The script refuses to send an archive that contains the key.
+
+The file itself is only in an administrator's download from the site. The
+server checks the key on every request anyway, so this is a convenience rather
+than a permission.
+
+Two things worth knowing before you rely on it:
+
+- **`dragonstation.json` is gitignored.** It holds a live key. Do not commit it.
+- **A key is replaced every time you download your bundle.** A console unpacked
+  a while ago can hold one the site has retired; `./bin/publish-site` then answers
+  with the fix rather than a bare error. Download the bundle again and unpack it
+  over this directory.
+
+---
+
 ## On Windows
 
 Every shell script has a batch equivalent beside it, doing the same thing:
 
 | Shell | Windows |
 |---|---|
-| `./run [cart]` | `run.bat [cart]` |
-| `./run-test` | `run-test.bat` |
-| `./smoke [n]` | `smoke.bat [n]` |
-| `./publish-cart` | `publish-cart.bat` |
+| `./bin/run [cart]` | `bin\run.bat [cart]` |
+| `./bin/run-test` | `bin\run-test.bat` |
+| `./bin/smoke [n]` | `bin\smoke.bat [n]` |
+| `./bin/publish-cart` | `bin\publish-cart.bat` |
+| `./bin/update-library` | `bin\update-library.bat` |
+| `./bin/publish-site` | `bin\publish-site.bat` |
+| `./bin/publish-console` | `bin\publish-console.bat` |
 
 ```bat
 run.bat                             boot the default cart
@@ -132,7 +220,7 @@ platform, and `publish-cart.bat` defaults `--platforms` to `windows-amd64`.
 The library, the cart contract and the runtime are entirely platform-neutral —
 only these four scripts differ. Two differences worth knowing:
 
-- **`publish-cart.bat` checks assets by booting.** `./publish-cart` greps the
+- **`publish-cart.bat` checks assets by booting.** `./bin/publish-cart` greps the
   cart's source for quoted asset paths. Parsing quotes in batch is fragile
   enough that it would either skip the check or abort a good build, so the batch
   version boots the staged directory for 60 frames and looks for the console's
@@ -158,13 +246,13 @@ only these four scripts differ. Two differences worth knowing:
 *every* cart under `carts/`. Pointed at the console, it would ship the
 selftest, the widgets gallery and the arcade cart all inside one build.
 
-So publish through `./publish-cart`, which stages a throwaway directory first:
+So publish through `./bin/publish-cart`, which stages a throwaway directory first:
 
 ```sh
-./publish-cart --list                  # carts, with the titles that will publish
-./publish-cart arcade                  # package arcade for linux-amd64
-./publish-cart arcade --dry-run        # stage + verify, package nothing
-./publish-cart arcade --platforms=html5,linux-amd64
+./bin/publish-cart --list                  # carts, with the titles that will publish
+./bin/publish-cart arcade                  # package arcade for linux-amd64
+./bin/publish-cart arcade --dry-run        # stage + verify, package nothing
+./bin/publish-cart arcade --platforms=html5,linux-amd64
 ```
 
 It stages `builds/cart-staging/<cart>/` containing the console library, the
@@ -283,9 +371,16 @@ console/
 │       └── data/            anything else it reads
 ├── sprites/                 console starter art: the fallback when a cart has
 │                            no file of its own
+├── bin/                     every script, and their .bat equivalents
+│   ├── run                  boot a cart
+│   ├── run-test             the self test
+│   ├── smoke                boot every cart headlessly
+│   ├── publish-cart         package exactly one cart for desktop
+│   ├── publish-site         send a cart to a Dragonstation site
+│   ├── publish-console      release a new console version (admin)
+│   └── update-library       refresh the library from one
 ├── shots/                   screenshots written by --shot
-├── run / run-test / smoke   and their .bat equivalents, for Windows
-├── publish-cart             package exactly one cart
+├── errors/                  the last crash's output, and what to do about it
 └── metadata/game_metadata.txt
 ```
 
@@ -341,7 +436,7 @@ shared_assets    # => ['sprites/dragon-0.png']  borrowed, should be moved in
 ```
 
 A cart that owns its assets has none — and that is the state you want before
-publishing, because `./publish-cart` stages the cart directory alone, so
+publishing, because `./bin/publish-cart` stages the cart directory alone, so
 anything borrowed would simply be missing from the build.
 
 ### More than one file
@@ -754,7 +849,7 @@ of each live in `shots/` (regenerate with `--shot`).
 ## Tests
 
 ```sh
-./run-test
+./bin/run-test
 ```
 
 175 tests / 1435 assertions, executed **inside the real DragonRuby runtime** —
@@ -771,7 +866,7 @@ It prints a machine-readable summary:
 CONSOLE_TEST_STATUS=PASS TESTS=175 ASSERTIONS=1435 FAILURES=0
 ```
 
-`./smoke` additionally boots every cart headlessly and fails if any raises.
+`./bin/smoke` additionally boots every cart headlessly and fails if any raises.
 
 ---
 

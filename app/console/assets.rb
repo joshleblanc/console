@@ -19,7 +19,7 @@
 # A file inside the cart wins; a file that exists only at the console root still
 # resolves, so the console can ship starter art for a brand-new cart. Each
 # fallback is logged, because a published cart stages its cart directory alone
-# (see ./publish-cart) and anything it borrows from the console root is missing
+# (see ./bin/publish-cart) and anything it borrows from the console root is missing
 # from the build. A cart that owns its assets has no fallbacks.
 module Console
   module Assets

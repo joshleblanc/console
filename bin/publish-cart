@@ -27,7 +27,7 @@
 # dragonruby-publish, so --platforms, --package and friends work as usual.
 set -eu
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 DIR=$(pwd)
 ROOT=$(dirname "$DIR")
 DRAGONRUBY_PUBLISH="$ROOT/dragonruby-publish"
@@ -103,7 +103,7 @@ if [ "$1" = "--list" ]; then
   exit 0
 fi
 
-# Accepts a name or a path, like ./run does. Whatever the cart is called here,
+# Accepts a name or a path, like ./bin/run does. Whatever the cart is called here,
 # it is staged (and pinned) as carts/<its directory name>, so a cart outside the
 # gallery publishes under the same layout a gallery cart would.
 CART_ARG="$1"

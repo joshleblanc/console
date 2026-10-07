@@ -3,7 +3,7 @@
 # The smallest interesting cart. Read it top to bottom: this is the whole API
 # surface a prototype needs.
 #
-#   ./run --cart hello
+#   ./bin/run --cart hello
 #
 # It has no scenes and no assets. Everything is drawn from shapes and generated
 # textures, which is the point: you can see a game before you have art.

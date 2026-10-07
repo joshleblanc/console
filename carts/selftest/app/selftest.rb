@@ -2,7 +2,7 @@
 #
 # The console's own test suite. Run it with:
 #
-#   ./run-test
+#   ./bin/run-test
 #
 # Everything is asserted against the live DragonRuby runtime, so these are not
 # mocked unit tests: they exercise the real output collections, the real
@@ -283,7 +283,7 @@ class AssetsSuite
   end
 
   # A cart is named by a path, and a bare name is shorthand for the gallery.
-  # Both routes have to reach the same directory, or ./run carts/x and ./run x
+  # Both routes have to reach the same directory, or ./bin/run carts/x and ./bin/run x
   # would quietly boot different things.
   test 'a bare name resolves into the default gallery' do
     loader = Console::CartLoader.new $args
@@ -1248,7 +1248,7 @@ class RuntimeSuite
     assert_equal 'selftest', Console.cart_name
   end
 
-  # --- single-cart publishing (see ./publish-cart) ----------------------
+  # --- single-cart publishing (see ./bin/publish-cart) ----------------------
   #
   # A published build ships one cart and an entry point that pins it, so the
   # pin has to outrank both ways of asking for a different cart.
@@ -1301,7 +1301,7 @@ class RuntimeSuite
     #
     # `run` is deliberately not called here: aborting calls DR.request_quit,
     # and a unit test must not quit the process it is running in. The abort
-    # itself is covered end to end by ./publish-cart, which boots a staged
+    # itself is covered end to end by ./bin/publish-cart, which boots a staged
     # build with its cart removed.
     loader = Console::CartLoader.new($args).pin 'no_such_cart'
     refute_includes loader.available, 'no_such_cart'

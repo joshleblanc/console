@@ -1,0 +1,305 @@
+#!/bin/sh
+# Send a cart to a Dragonstation site, instead of zipping it and uploading it.
+#
+#   ./publish-site arcade                  send carts/arcade
+#   ./publish-site carts/hello             a path, as run takes one
+#   ./publish-site arcade --title="My Game"  set the title the site will show
+#   ./publish-site arcade --dry-run        build and check, send nothing
+#   ./publish-site --list                  list the carts that could be sent
+#   ./publish-site --help
+#
+# Where a cart goes is one POST, and this script is that POST: the archive goes
+# up as multipart/form-data under `archive`, with the API key from
+# dragonstation.json in an Authorization header. The site runs it through exactly
+# the same ingest the browser form does, so the refusals -- an archive that is
+# not one cart, art a cart names but does not own, a zip bomb, a symlink -- are
+# the form's, and they arrive here as a list to read.
+#
+# It lands as a *draft* under your account. Nothing goes public because a script
+# ran; that stays a decision a person makes on the site after seeing it run.
+#
+# The key is replaced by every personal download from the site, so a console
+# that was unpacked a while ago can hold one the site has retired. That arrives
+# as a 401 and the bottom half of this script says what to do about it.
+set -eu
+
+cd "$(dirname "$0")/.."
+DIR=$(pwd)
+
+CREDENTIALS="dragonstation.json"
+CARTS_DIR="carts"
+# Same reason update-library stages under builds/: it is already ignored, and it
+# is on the same filesystem as the cart so moving the archive into place is a
+# rename rather than a copy.
+WORK_ROOT="$DIR/builds/tmp"
+
+die() {
+  echo "publish-site: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'USAGE'
+usage: ./publish-site <cart> [--title=<title>] [--dry-run]
+       ./publish-site --list
+       ./publish-site --help
+
+  <cart>       a cart name (arcade) or a path to one (carts/arcade), the same
+               forms ./bin/run takes.
+  --title=     the title to publish under. Defaults to the TITLE the cart states.
+  --dry-run    build the archive and check the key, send nothing.
+  --list       list the carts this could send.
+  --help       this text.
+
+Needs dragonstation.json in the console root -- the file that arrives in the
+download from the site, holding the key and where to send things.
+USAGE
+}
+
+json_string() {
+  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$1" | head -1
+}
+
+list_carts() {
+  [ -d "$CARTS_DIR" ] || die "no carts/ directory in this console"
+
+  found=""
+  for entry in "$CARTS_DIR"/*/; do
+    [ -d "$entry" ] || continue
+    name=$(basename "$entry")
+    # A cart directory is one with an entry file; anything else in carts/ is
+    # scratch, and publish-cart refuses it for the same reason.
+    if [ -f "$entry/app/$name.rb" ]; then
+      found="$found $name"
+      echo "  $name"
+    fi
+  done
+
+  [ -n "$found" ] || die "no carts in $CARTS_DIR (a cart is a directory with app/<name>.rb)"
+}
+
+# --- arguments ------------------------------------------------------------
+
+CART=""
+TITLE=""
+DRY_RUN=0
+WANT_LIST=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help | -h)
+      usage
+      exit 0
+      ;;
+    --list)
+      WANT_LIST=1
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      ;;
+    --title=*) TITLE="${1#--title=}" ;;
+    --title)
+      shift
+      [ $# -gt 0 ] || die "--title needs a value, as --title=\"My Game\""
+      TITLE="$1"
+      ;;
+    -*) die "unknown argument '$1'  (try --help)" ;;
+    *)
+      [ -z "$CART" ] || die "one cart at a time; '$CART' and '$1' were both named"
+      CART="$1"
+      ;;
+  esac
+  shift
+done
+
+if [ "$WANT_LIST" -eq 1 ]; then
+  echo "publish-site: carts that could be sent:"
+  list_carts
+  exit 0
+fi
+
+[ -n "$CART" ] || {
+  usage >&2
+  die "name a cart to send"
+}
+
+# A bare name is shorthand for carts/<name>, the same translation run does.
+case "$CART" in
+  */*) CART_DIR="$CART" ;;
+  *) CART_DIR="$CARTS_DIR/$CART" ;;
+esac
+
+[ -d "$CART_DIR" ] || die "no such cart: $CART_DIR"
+CART_NAME=$(basename "$CART_DIR")
+
+# The entry file is what makes a directory a cart, and it is what the site
+# refuses to do without: no app/<name>.rb means no cart, and saying so here
+# beats a 422 that lists it as a discovery problem.
+[ -f "$CART_DIR/app/$CART_NAME.rb" ] ||
+  die "$CART_DIR has no app/$CART_NAME.rb, so it is not a cart this can send."
+
+# --- what it needs --------------------------------------------------------
+
+command -v curl >/dev/null 2>&1 ||
+  die "needs curl to send the cart, and this machine has none."
+
+ZIP_TOOL=""
+for tool in zip python3; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    ZIP_TOOL="$tool"
+    break
+  fi
+done
+[ -n "$ZIP_TOOL" ] || die "needs a way to write a ZIP, and this machine has none. Tried: zip, python3."
+
+# --- credentials ----------------------------------------------------------
+
+[ -f "$CREDENTIALS" ] || {
+  echo "publish-site: no $CREDENTIALS in this console." >&2
+  echo "publish-site: it comes in the download from the site -- sign in there and" >&2
+  echo "publish-site: unpack the bundle over this directory. It carries the key" >&2
+  echo "publish-site: this sends with, and the address it sends to." >&2
+  exit 2
+}
+
+API_KEY=$(json_string "$CREDENTIALS" api_key)
+PUBLISH_URL=$(json_string "$CREDENTIALS" publish_url)
+
+[ -n "$API_KEY" ] || die "$CREDENTIALS has no api_key."
+[ -n "$PUBLISH_URL" ] ||
+  die "$CREDENTIALS has no publish_url. It is written by the site; a hand-made one is probably wrong."
+
+case "$PUBLISH_URL" in
+  http://* | https://*) ;;
+  *) die "publish_url '$PUBLISH_URL' is not an http(s) URL" ;;
+esac
+
+# --- scratch --------------------------------------------------------------
+
+mkdir -p "$WORK_ROOT"
+WORK=$(mktemp -d "$WORK_ROOT/publish-site.XXXXXX" 2>/dev/null ||
+  printf '%s' "$WORK_ROOT/publish-site.$$")
+mkdir -p "$WORK"
+
+cleanup() {
+  rm -rf "$WORK"
+}
+trap cleanup EXIT HUP INT TERM
+
+ARCHIVE="$WORK/$CART_NAME.zip"
+
+# --- build ----------------------------------------------------------------
+
+echo "publish-site: packing $CART_DIR"
+
+# The archive is the cart directory itself, which the site accepts as well as an
+# archive containing one -- fewer moving parts than wrapping it in a parent that
+# has to be exactly one cart deep.
+#
+# Junk is excluded by name rather than by a dot rule: a cart is allowed to have
+# files beginning with a dot, and what is not allowed is the two things a desktop
+# adds without being asked.
+case "$ZIP_TOOL" in
+  zip)
+    # -X drops the extra fields a macOS zip writes, -r recurses, and the two
+    # exclusions are the only filtering.
+    (cd "$(dirname "$CART_DIR")" &&
+      zip -q -r -X "$ARCHIVE" "$CART_NAME" \
+        -x "*/.DS_Store" -x "__MACOSX/*" -x "*/.DS_Store") ||
+      die "zip failed for $CART_DIR"
+    ;;
+  python3)
+    python3 - "$CART_DIR" "$ARCHIVE" <<'PY' || die "packing failed for $CART_DIR"
+import os, sys, zipfile
+
+root, archive = sys.argv[1], sys.argv[2]
+JUNK = {".DS_Store", "__MACOSX"}
+
+with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
+    for directory, _, files in os.walk(root):
+        if os.path.basename(directory) in JUNK:
+            continue
+        for name in files:
+            if name == ".DS_Store":
+                continue
+            path = os.path.join(directory, name)
+            z.write(path, os.path.relpath(path, os.path.dirname(root)))
+PY
+    ;;
+esac
+
+[ -s "$ARCHIVE" ] || die "the archive came out empty: $ARCHIVE"
+
+SIZE=$(wc -c < "$ARCHIVE" | tr -d ' ')
+echo "publish-site: $CART_NAME.zip, $SIZE bytes"
+echo "publish-site: sending to $PUBLISH_URL"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  # Kept, because the point of a dry run is looking at what would have been
+  # sent -- and it cannot stay in the scratch directory, which is about to be
+  # removed.
+  mkdir -p "$DIR/builds"
+  KEEP="$DIR/builds/$CART_NAME.zip"
+  cp -f "$ARCHIVE" "$KEEP"
+
+  echo "publish-site: --dry-run, nothing sent"
+  echo "publish-site: the archive it would have sent is at $KEEP"
+  exit 0
+fi
+
+# --- send -----------------------------------------------------------------
+
+# The response body and the status are kept apart, because what to do about
+# them depends entirely on which one it is: a 422 body is a list of problems
+# worth reading line by line, and a 401 body is two words worth replacing.
+RESPONSE="$WORK/response.txt"
+STATUS=$(curl -sS -o "$RESPONSE" -w '%{http_code}' \
+  -X POST "$PUBLISH_URL" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "archive=@$ARCHIVE;filename=$CART_NAME.zip;type=application/zip" \
+  ${TITLE:+-F "title=$TITLE"}) ||
+  die "could not reach $PUBLISH_URL (curl exit $?)"
+
+# One field out of the JSON the site answers with, without needing a JSON tool
+# on a machine that may not have one.
+json_field() {
+  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$1" | head -1
+}
+
+case "$STATUS" in
+  201)
+    # The site's own URL for the cart, used as it comes. Rebuilding it here from
+    # a slug would be this script's guess at where it lives, and a guess is
+    # exactly what a published link should not be.
+    URL=$(json_field "$RESPONSE" url)
+
+    echo "publish-site: $CART_NAME arrived as a draft"
+    [ -n "$URL" ] && echo "publish-site:   $URL"
+    echo "publish-site: it is a draft under your account. Play it, then publish it there."
+    ;;
+  401)
+    echo "publish-site: the site refused the key." >&2
+    echo "publish-site: keys are replaced every time you download your bundle, so" >&2
+    echo "publish-site: the one in $CREDENTIALS may be one that was retired." >&2
+    echo "publish-site: download the bundle again and unpack it over this console." >&2
+    exit 1
+    ;;
+  422 | 400)
+    echo "publish-site: the site will not run $CART_NAME as it stands." >&2
+    sed -n 's/.*"problems"[[:space:]]*:[[:space:]]*\[\(.*\)\].*/\1/p' "$RESPONSE" |
+      tr ',' '\n' | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//; s/^[[:space:]]*//' |
+      grep . | sed 's/^/    /' >&2
+    echo >&2
+    json_field "$RESPONSE" error | sed 's/^/publish-site: /' >&2
+    exit 1
+    ;;
+  503)
+    json_field "$RESPONSE" error | sed 's/^/publish-site: /' >&2
+    exit 1
+    ;;
+  *)
+    echo "publish-site: the site answered $STATUS" >&2
+    sed 's/^/    /' "$RESPONSE" >&2
+    exit 1
+    ;;
+esac

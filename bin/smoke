@@ -11,7 +11,7 @@
 #   xvfb-run -a ./smoke
 #
 # Exits non-zero if any cart raised an exception.
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 DIR=$(pwd)
 DRAGONRUBY=$(dirname "$DIR")/dragonruby
 TICKS=${1:-300}

@@ -4,7 +4,7 @@
 # scoring, a pause overlay and a game-over screen. It is here to show that the
 # surface is big enough for a real game while staying small enough to read.
 #
-#   ./run --cart arcade
+#   ./bin/run --cart arcade
 #
 # Controls: arrows / WASD / left stick to move, space / gamepad A to shoot,
 # ESC to pause. Every action goes through `input`, so the same code serves

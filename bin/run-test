@@ -5,7 +5,7 @@
 #
 # Tests execute inside the real DragonRuby runtime, so a pass means the library
 # works against the actual renderer and the actual mruby build.
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 DIR=$(pwd)
 DRAGONRUBY=$(dirname "$DIR")/dragonruby
 

@@ -1,0 +1,364 @@
+#!/bin/sh
+# Refresh this console's own library from a hosted Dragonstation site.
+#
+#   ./update-library                              the site named in dragonstation.json
+#   ./update-library --site=http://127.0.0.1:3000  an explicit site
+#   ./update-library --dry-run                    report what would change, change nothing
+#   ./update-library --help
+#
+# The site vendors the console library and already serves every byte of it to any
+# browser that runs a cart, so it publishes the same tree as
+# <site>/console/library.zip with no login. That is what makes an update a
+# download and an unpack from a terminal, with no session to log in with and no
+# browser form to fill in.
+#
+# Which site? There is deliberately no canonical production domain baked in
+# here: the site knows its own address and hands it out in dragonstation.json,
+# the credentials file a reader's bundle unpacks into this directory. So the
+# address comes from --site when you name one, and from that file otherwise --
+# hardcoding a host would mean a checkout silently pointing at somebody else's
+# site, or at nothing at all.
+#
+# Only the version decides whether anything happens. The installed version is
+# read from the MAJOR/MINOR/PATCH constants in app/console/version.rb, and the
+# downloaded copy is read the same way; a site that is not newer than what is
+# installed changes nothing. That is the whole rule, because the site is where
+# the library is authored, not here.
+#
+# Everything is unpacked into a scratch directory under builds/ and only moved
+# into place once it has been verified, so a truncated download, a hostile
+# archive or a full disk cannot leave the console with half a library: either
+# the whole tree is in or nothing has moved. The scratch directory is removed on
+# every exit path, including failure.
+set -eu
+
+cd "$(dirname "$0")/.."
+DIR=$(pwd)
+
+CREDENTIALS="dragonstation.json"
+VERSION_FILE="app/console/version.rb"
+
+# Scratch lives under builds/ for two reasons. builds/ is already ignored, and it
+# sits on the same filesystem as app/console, so installing the new library is a
+# rename rather than a copy that can be interrupted half way.
+WORK_ROOT="$DIR/builds/tmp"
+
+die() {
+  echo "update-library: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'USAGE'
+usage: ./update-library [--site=<url>] [--dry-run]
+       ./update-library --help
+
+  --site=<url>  the Dragonstation to download from. Defaults to site_url in
+                dragonstation.json, which is how a checkout knows its site.
+  --dry-run     report the version and the files that would change, and change
+                nothing.
+  --help        this text.
+
+Downloads <site>/console/library.zip (public, no login), verifies it, and
+replaces this console's app/console/ plus the library's fonts, font.ttf and
+tiny.ttf, with the copy the site serves. Nothing changes when the site's version
+is not newer than the installed one.
+USAGE
+}
+
+# One value out of a JSON file the site wrote. The site pretty-prints it, but the
+# match does not depend on that: the key is found anywhere on a line, so a
+# compact file is read just as well as a formatted one.
+json_string() {
+  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$1" | head -1
+}
+
+# --- arguments ------------------------------------------------------------
+
+SITE=""
+DRY_RUN=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help | -h)
+      usage
+      exit 0
+      ;;
+    --site=*) SITE="${1#--site=}" ;;
+    --site)
+      shift
+      [ $# -gt 0 ] || die "--site needs a URL, as --site=<url>"
+      SITE="$1"
+      ;;
+    --dry-run) DRY_RUN=1 ;;
+    *) die "unknown argument '$1'  (try --help)" ;;
+  esac
+  shift
+done
+
+# --- which site -----------------------------------------------------------
+
+if [ -z "$SITE" ] && [ -f "$CREDENTIALS" ]; then
+  SITE=$(json_string "$CREDENTIALS" site_url)
+fi
+
+if [ -z "$SITE" ]; then
+  echo "update-library: no site to download from." >&2
+  echo "update-library: pass one, as --site=<url>, or download your bundle from" >&2
+  echo "update-library: the site (settings page) and unpack it here -- it carries" >&2
+  echo "update-library: this file, $CREDENTIALS, naming the site." >&2
+  usage >&2
+  exit 2
+fi
+
+# A trailing slash would double up in the path below, and a missing scheme is a
+# URL curl cannot use.
+case "$SITE" in
+  http://* | https://*) ;;
+  *) die "'$SITE' is not an http(s) URL" ;;
+esac
+SITE="${SITE%/}"
+LIBRARY_URL="$SITE/console/library.zip"
+
+# --- what it needs --------------------------------------------------------
+
+command -v curl >/dev/null 2>&1 || die \
+  "needs curl to download the library, and this machine has none."
+
+# An unzip tool, whichever one this machine has. Checked rather than assumed,
+# because the failure otherwise shows up as "command not found" halfway through
+# an update that has already unpacked half of the new library.
+ZIP_TOOL=""
+for tool in unzip bsdtar python3; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    ZIP_TOOL="$tool"
+    break
+  fi
+done
+[ -n "$ZIP_TOOL" ] || die \
+  "needs a way to read a ZIP, and this machine has none. Tried: unzip, bsdtar, python3."
+
+# The archive's entries, one per line. Written once to a file, because the
+# checks below read it several times and re-listing a ZIP for every question is
+# both slow and silly.
+zip_list() {
+  case "$ZIP_TOOL" in
+    unzip) unzip -Z1 "$1" ;;
+    bsdtar) bsdtar -tf "$1" ;;
+    python3)
+      python3 -c 'import sys, zipfile
+print("\n".join(entry.filename for entry in zipfile.ZipFile(sys.argv[1]).infolist()))' "$1"
+      ;;
+  esac
+}
+
+zip_extract() {
+  case "$ZIP_TOOL" in
+    unzip) unzip -q "$1" -d "$2" ;;
+    bsdtar) bsdtar -xf "$1" -C "$2" ;;
+    python3) python3 -m zipfile -e "$1" "$2" ;;
+  esac
+}
+
+# --- scratch --------------------------------------------------------------
+
+mkdir -p "$WORK_ROOT"
+WORK=$(mktemp -d "$WORK_ROOT/update-library.XXXXXX" 2>/dev/null ||
+  printf '%s' "$WORK_ROOT/update-library.$$")
+mkdir -p "$WORK"
+
+# The scratch directory is removed on every exit path, so a failed update leaves
+# nothing behind that a later run could mistake for a good download.
+cleanup() {
+  rm -rf "$WORK"
+}
+trap cleanup EXIT HUP INT TERM
+
+# --- the installed version ------------------------------------------------
+
+# MAJOR/MINOR/PATCH out of a version.rb, read with sed because this is a shell
+# script and requiring the file would need the Ruby this console ships to run
+# games with. Same three constants the site reads to label its own vendored copy.
+declared_version() {
+  [ -f "$1" ] || return 1
+
+  version=""
+  for part in MAJOR MINOR PATCH; do
+    number=$(sed -n \
+      "s/^[[:space:]]*$part[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p" "$1" | head -1)
+    [ -n "$number" ] || return 1
+    version="$version.$number"
+  done
+
+  printf '%s' "${version#.}"
+}
+
+# Numeric comparison, field by field: -1 when $1 is older, 0 the same, 1 newer.
+# String comparison would read 0.10.0 as older than 0.9.0, which is exactly the
+# kind of quiet wrong answer that stops people updating.
+version_cmp() {
+  left="$1"
+  right="$2"
+
+  l_major=${left%%.*}
+  l_rest=${left#*.}
+  l_minor=${l_rest%%.*}
+  l_patch=${l_rest#*.}
+  r_major=${right%%.*}
+  r_rest=${right#*.}
+  r_minor=${r_rest%%.*}
+  r_patch=${r_rest#*.}
+
+  for pair in "$l_major:$r_major" "$l_minor:$r_minor" "$l_patch:$r_patch"; do
+    a=${pair%%:*}
+    b=${pair#*:}
+    [ "$a" -eq "$b" ] && continue
+    [ "$a" -gt "$b" ] && echo 1 || echo -1
+    return 0
+  done
+
+  echo 0
+}
+
+LOCAL_VERSION=$(declared_version "$VERSION_FILE") ||
+  die "could not read MAJOR/MINOR/PATCH from $VERSION_FILE"
+
+# --- download -------------------------------------------------------------
+
+echo "update-library: console $LOCAL_VERSION is installed"
+echo "update-library: downloading $LIBRARY_URL"
+
+# -f so an error page is an error rather than a file full of HTML; -L because a
+# site behind a redirect is still the site.
+curl -fsSL -o "$WORK/library.zip" "$LIBRARY_URL" ||
+  die "could not download $LIBRARY_URL (curl exit $?)"
+
+[ -s "$WORK/library.zip" ] || die "the download was empty: $LIBRARY_URL"
+
+# --- verify ---------------------------------------------------------------
+
+# Checked before anything is unpacked, because an entry that names somewhere
+# outside the directory it lands in is not a file this script should write, and
+# the site's own upload path refuses those for the same reason. A backslash is
+# refused with them: on a POSIX filesystem it is a legal filename character,
+# which is exactly why a path spelled with one is a path trying to be another
+# platform's.
+zip_list "$WORK/library.zip" > "$WORK/entries.txt" ||
+  die "that is not a ZIP this machine can read ($ZIP_TOOL said no)"
+
+UNSAFE=$(grep -E '(^/|(^|/)\.\.(/|$)|\\)' "$WORK/entries.txt" || true)
+if [ -n "$UNSAFE" ]; then
+  echo "update-library: ABORT the download has entries that escape the console:" >&2
+  printf '%s\n' "$UNSAFE" | sed 's/^/    /' >&2
+  exit 1
+fi
+
+# The two files this script cannot do its job without. core.rb is the library
+# itself; version.rb is where the version to compare comes from, so a download
+# without it is a download this cannot reason about.
+for required in app/console/core.rb app/console/version.rb; do
+  if ! grep -qx "$required" "$WORK/entries.txt"; then
+    echo "update-library: the download has no $required, so it is not the console" >&2
+    echo "update-library: library. It holds $(grep -c . "$WORK/entries.txt" | tr -d ' ') entries:" >&2
+    sed 's/^/    /' "$WORK/entries.txt" >&2
+    exit 1
+  fi
+done
+
+# The download is the console, not just its library: the entry point, the
+# scripts and the starter art all travel with it, and an update that left them
+# behind would produce a console whose library had moved on and whose everything
+# else had not.
+#
+# app/main.rb is the console's own entry point, which is not the file the site
+# serves to run a cart -- that one is generated per cartridge to pin a cart. An
+# older download without it is still usable, so its absence is reported rather
+# than treated as a broken archive.
+if grep -qx "app/main.rb" "$WORK/entries.txt"; then
+  echo "update-library: this download carries the whole console, not just its library"
+else
+  echo "update-library: no app/main.rb in the download; this looks like a library-only build"
+fi
+
+zip_extract "$WORK/library.zip" "$WORK" ||
+  die "could not unpack the download ($ZIP_TOOL failed)"
+
+REMOTE_VERSION=$(declared_version "$WORK/$VERSION_FILE") ||
+  die "could not read MAJOR/MINOR/PATCH from the downloaded $VERSION_FILE"
+
+# --- decide ---------------------------------------------------------------
+
+CMP=$(version_cmp "$REMOTE_VERSION" "$LOCAL_VERSION")
+
+if [ "$CMP" -le 0 ]; then
+  if [ "$CMP" -eq 0 ]; then
+    echo "update-library: the site serves $REMOTE_VERSION, which is what is installed."
+  else
+    echo "update-library: the site serves $REMOTE_VERSION, older than the installed $LOCAL_VERSION."
+  fi
+  echo "update-library: nothing to do; this console is at $LOCAL_VERSION"
+  exit 0
+fi
+
+# What differs, as diff sees it, with the scratch path folded back to the site's
+# layout so the paths read the way the files are actually named.
+report_changes() {
+  diff -rq "app/console" "$WORK/app/console" 2>/dev/null |
+    sed "s|$WORK/||g; s|app/console and app/console|app/console|" || true
+}
+
+echo "update-library: the site serves $REMOTE_VERSION; this console has $LOCAL_VERSION"
+
+CHANGES=$(report_changes)
+
+if [ -z "$CHANGES" ]; then
+  echo "update-library: the versions differ but the library files are identical"
+else
+  # grep exits 1 when it matches nothing, which under `set -e` would kill the
+  # script at the count rather than at the report.
+  FILE_COUNT=$(printf '%s\n' "$CHANGES" | grep -c . || true)
+  echo "update-library: $FILE_COUNT file(s) differ:"
+  printf '%s\n' "$CHANGES" | sed 's/^/    /'
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "update-library: --dry-run, $LOCAL_VERSION still installed"
+  exit 0
+fi
+
+# --- install --------------------------------------------------------------
+
+# Moved aside first, so the old library is recoverable until the new one is in.
+# The restore below is the case that matters: if the second move fails, the
+# console is left exactly as it was rather than with no library at all.
+mv app/console "$WORK/previous-app-console" ||
+  die "could not move the installed library aside; nothing changed"
+mv "$WORK/app/console" app/console || {
+  mv "$WORK/previous-app-console" app/console
+  die "could not install the downloaded library; the installed one was restored"
+}
+
+# The entry point travels with the library: a console whose main.rb still
+# requires a module the new library has renamed is a console that will not
+# boot. Older downloads carry no main.rb, and then this is simply skipped.
+if [ -f "$WORK/app/main.rb" ] && [ -f app/main.rb ]; then
+  cp -f app/main.rb "$WORK/previous-main.rb"
+  cp -f "$WORK/app/main.rb" app/main.rb ||
+    cp -f "$WORK/previous-main.rb" app/main.rb
+fi
+
+# The fonts the library serves alongside itself. DragonRuby reads them from the
+# game root, so they are part of the library and travel with it. Only the ones
+# this version ships are touched: a version without tiny.ttf is not a reason to
+# delete the console's tiny.ttf.
+FONTS=""
+for font in font.ttf tiny.ttf; do
+  if [ -f "$WORK/$font" ]; then
+    mv -f "$WORK/$font" "$DIR/$font"
+    FONTS="$FONTS $font"
+  fi
+done
+
+echo "update-library: replaced app/console, app/main.rb and$FONTS"
+echo "update-library: console $LOCAL_VERSION -> $REMOTE_VERSION"
+echo "update-library: run ./bin/run-test to prove the new library boots"

@@ -15,9 +15,9 @@ rem  the machine-readable line is the authoritative answer.
 rem ============================================================================
 setlocal
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 if errorlevel 1 (
-  echo run-test.bat: could not enter %~dp0 1>&2
+  echo run-test.bat: could not enter %~dp0.. 1>&2
   exit /b 1
 )
 

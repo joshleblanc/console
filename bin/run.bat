@@ -25,9 +25,9 @@ rem  This mirrors ./run exactly. Keep the two in step.
 rem ============================================================================
 setlocal enabledelayedexpansion
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 if errorlevel 1 (
-  echo run.bat: could not enter %~dp0 1>&2
+  echo run.bat: could not enter %~dp0.. 1>&2
   exit /b 1
 )
 

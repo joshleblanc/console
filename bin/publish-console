@@ -1,0 +1,273 @@
+#!/bin/sh
+# Release this console to the site as a new version.
+#
+#   ./bin/publish-console                 package and send what is here now
+#   ./bin/publish-console --dry-run       build the archive, send nothing
+#   ./bin/publish-console --help
+#
+# This is the counterpart to ./bin/publish-site. That one sends a cart; this one
+# sends the console, which becomes a new version every cart can be pinned to.
+# It is the same install the admin upload screen performs, so an archive this
+# produces is one the site will accept -- and vice versa.
+#
+# **What goes in the archive is a console, not a checkout.** A version is
+# permanent: the site refuses to replace one, because a cartridge pinned to
+# 0.1.0 has to keep running against 0.1.0 forever. So nothing that describes
+# this machine goes up -- no .git, no builds/, no shots/, no errors/last.txt, no
+# carts/, and not the publishing key sitting in this directory. What does go up
+# is everything a person needs to run a console: the library, the entry point,
+# every script, the starter art, and a carts/ directory with a README in it.
+#
+# The version comes from app/console/version.rb and has to be new. The site
+# reads it from the same file and refuses a duplicate, so a release that forgot
+# to bump is caught there rather than after it has overwritten nothing.
+#
+# Administrators only. The site resolves the key to its owner on every request
+# and refuses anybody who is not one, so this script being in your checkout is a
+# convenience and not a permission.
+set -eu
+
+cd "$(dirname "$0")/.."
+DIR=$(pwd)
+
+CREDENTIALS="dragonstation.json"
+WORK_ROOT="$DIR/builds/tmp"
+# Kept out of the archive: see the note above about what a version is.
+CREDENTIALS_PATH="dragonstation.json"
+
+die() {
+  echo "publish-console: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'USAGE'
+usage: ./bin/publish-console [--dry-run]
+       ./bin/publish-console --help
+
+  --dry-run   build the archive and check the key, send nothing.
+  --help      this text.
+
+Packages this console and sends it to the site as a new version. Needs an
+administrator's key in dragonstation.json, and a version in
+app/console/version.rb that the site has not seen.
+USAGE
+}
+
+json_string() {
+  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$1" | head -1
+}
+
+# --- arguments ------------------------------------------------------------
+
+DRY_RUN=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help | -h)
+      usage
+      exit 0
+      ;;
+    --dry-run) DRY_RUN=1 ;;
+    *) die "unknown argument '$1'  (try --help)" ;;
+  esac
+  shift
+done
+
+command -v curl >/dev/null 2>&1 ||
+  die "needs curl to send the console, and this machine has none."
+
+ZIP_TOOL=""
+for tool in zip python3; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    ZIP_TOOL="$tool"
+    break
+  fi
+done
+[ -n "$ZIP_TOOL" ] || die "needs a way to write a ZIP, and this machine has none. Tried: zip, python3."
+
+# --- credentials ----------------------------------------------------------
+
+[ -f "$CREDENTIALS" ] || {
+  echo "publish-console: no $CREDENTIALS in this console." >&2
+  echo "publish-console: it comes in the download from the site -- sign in there and" >&2
+  echo "publish-console: unpack the bundle over this directory." >&2
+  exit 2
+}
+
+API_KEY=$(json_string "$CREDENTIALS" api_key)
+RELEASE_URL=$(json_string "$CREDENTIALS" release_url)
+
+[ -n "$API_KEY" ] || die "$CREDENTIALS has no api_key."
+[ -n "$RELEASE_URL" ] || {
+  echo "publish-console: this key cannot release a console version." >&2
+  echo "publish-console: $CREDENTIALS has no release_url, which the site only writes" >&2
+  echo "publish-console: for an administrator. Download the bundle again if you are one." >&2
+  exit 2
+}
+
+case "$RELEASE_URL" in
+  http://* | https://*) ;;
+  *) die "release_url '$RELEASE_URL' is not an http(s) URL" ;;
+esac
+
+# --- the version ----------------------------------------------------------
+
+VERSION_FILE="app/console/version.rb"
+[ -f "$VERSION_FILE" ] || die "no $VERSION_FILE, so there is no version to release."
+
+VERSION=""
+for part in MAJOR MINOR PATCH; do
+  number=$(sed -n \
+    "s/^[[:space:]]*$part[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p" "$VERSION_FILE" | head -1)
+  [ -n "$number" ] || die "could not read $part out of $VERSION_FILE"
+  VERSION="$VERSION.$number"
+done
+VERSION="${VERSION#.}"
+
+# --- what the archive holds -----------------------------------------------
+
+# A console, not a checkout: the directories and files below are what a version
+# is, and everything else in this tree belongs to this machine.
+#
+# The exclusion list is explicit rather than a rule like "everything but" so
+# that adding a file to the console is a decision -- it does not start shipping
+# to every reader because nobody remembered to exclude it.
+CONTENTS="app/main.rb app/console bin sprites metadata errors/readme.txt carts/README.md font.ttf tiny.ttf README.md .gitignore .gitattributes"
+
+for required in app/main.rb app/console/version.rb app/console/core.rb bin/run carts/README.md sprites; do
+  [ -e "$required" ] ||
+    die "$required is missing. A version is a whole console, not just its library."
+done
+
+# --- scratch --------------------------------------------------------------
+
+mkdir -p "$WORK_ROOT"
+WORK=$(mktemp -d "$WORK_ROOT/publish-console.XXXXXX" 2>/dev/null ||
+  printf '%s' "$WORK_ROOT/publish-console.$$")
+mkdir -p "$WORK"
+
+cleanup() {
+  rm -rf "$WORK"
+}
+trap cleanup EXIT HUP INT TERM
+
+ARCHIVE="$WORK/console-$VERSION.zip"
+
+# --- build ----------------------------------------------------------------
+
+echo "publish-console: packing console $VERSION"
+
+case "$ZIP_TOOL" in
+  zip)
+    # -X drops the extra fields a macOS zip writes. The list is the console,
+    # never the directory it happens to be sitting in.
+    # shellcheck disable=SC2086
+    (cd "$DIR" && zip -q -r -X "$ARCHIVE" $CONTENTS \
+      -x "*/.DS_Store" -x "__MACOSX/*" -x "*/errors/last.txt" \
+         -x "$CREDENTIALS_PATH") ||
+      die "zip failed"
+    ;;
+  python3)
+    python3 - "$DIR" "$ARCHIVE" "$CREDENTIALS_PATH" <<'PY' || die "packing failed"
+import os, sys, zipfile
+
+root, archive, credentials = sys.argv[1], sys.argv[2], sys.argv[3]
+PATHS = ["app/main.rb", "app/console", "bin", "sprites", "metadata",
+         "errors/readme.txt", "carts/README.md", "font.ttf", "tiny.ttf",
+         "README.md", ".gitignore", ".gitattributes"]
+JUNK = {".DS_Store", "__MACOSX", "last.txt", credentials}
+
+with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
+    for entry in PATHS:
+        path = os.path.join(root, entry)
+        if os.path.isfile(path):
+            z.write(path, entry)
+        elif os.path.isdir(path):
+            for directory, dirs, files in os.walk(path):
+                dirs[:] = [d for d in dirs if d not in JUNK]
+                for name in sorted(files):
+                    if name in JUNK:
+                        continue
+                    full = os.path.join(directory, name)
+                    z.write(full, os.path.relpath(full, root))
+PY
+    ;;
+esac
+
+[ -s "$ARCHIVE" ] || die "the archive came out empty: $ARCHIVE"
+
+# The credential must not have gone up with it. It is in the tree, and a rule
+# that forgot it would leak a live key into a public directory.
+if [ -n "$ZIP_TOOL" ] && (unzip -Z1 "$ARCHIVE" 2>/dev/null || true) | grep -q "$CREDENTIALS_PATH"; then
+  die "the archive contains $CREDENTIALS_PATH. That is a live key; refusing to send it."
+fi
+
+SIZE=$(wc -c < "$ARCHIVE" | tr -d ' ')
+COUNT=$(unzip -Z1 "$ARCHIVE" 2>/dev/null | grep -c . || true)
+# No unzip on this machine is not a reason to claim the archive was empty.
+if [ "${COUNT:-0}" -gt 0 ] 2>/dev/null; then
+  echo "publish-console: console-$VERSION.zip, $SIZE bytes, $COUNT files"
+else
+  echo "publish-console: console-$VERSION.zip, $SIZE bytes"
+fi
+echo "publish-console: sending to $RELEASE_URL"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  mkdir -p "$DIR/builds"
+  cp -f "$ARCHIVE" "$DIR/builds/console-$VERSION.zip"
+  echo "publish-console: --dry-run, nothing sent"
+  echo "publish-console: it is at $DIR/builds/console-$VERSION.zip"
+  exit 0
+fi
+
+# --- send -----------------------------------------------------------------
+
+RESPONSE="$WORK/response.txt"
+STATUS=$(curl -sS -o "$RESPONSE" -w '%{http_code}' \
+  -X POST "$RELEASE_URL" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "archive=@$ARCHIVE;filename=console-$VERSION.zip;type=application/zip") ||
+  die "could not reach $RELEASE_URL (curl exit $?)"
+
+json_field() {
+  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$1" | head -1
+}
+
+ERROR=$(json_field "$RESPONSE" error)
+
+case "$STATUS" in
+  201)
+    VERSION_OUT=$(json_field "$RESPONSE" version)
+    URL=$(json_field "$RESPONSE" url)
+
+    echo "publish-console: console ${VERSION_OUT:-$VERSION} installed"
+    [ -n "$URL" ] && echo "publish-console:   $URL"
+    echo "publish-console: it is not the default yet. Make it the default when you"
+    echo "publish-console: are ready for new carts to build against it."
+    ;;
+  401)
+    echo "publish-console: the site refused the key." >&2
+    echo "publish-console: keys are replaced every time you download your bundle, so" >&2
+    echo "publish-console: this one may be one that was retired." >&2
+    exit 1
+    ;;
+  403)
+    echo "publish-console: that key belongs to an account that is not an administrator." >&2
+    exit 1
+    ;;
+  422 | 400)
+    echo "publish-console: the site will not install this as a version." >&2
+    sed -n 's/.*"problems"[[:space:]]*:[[:space:]]*\[\(.*\)\].*/\1/p' "$RESPONSE" |
+      tr ',' '\n' | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//; s/^[[:space:]]*//' |
+      grep . | sed 's/^/    /' >&2
+    echo >&2
+    [ -n "$ERROR" ] && echo "publish-console: $ERROR" >&2
+    exit 1
+    ;;
+  *)
+    echo "publish-console: the site answered $STATUS" >&2
+    sed 's/^/    /' "$RESPONSE" >&2
+    exit 1
+    ;;
+esac

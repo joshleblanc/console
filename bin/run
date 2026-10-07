@@ -1,12 +1,12 @@
 #!/bin/sh
 # Run a cart on the console.
 #
-#   ./run                       boot the default cart
-#   ./run carts/hello           boot a cart by path
-#   ./run hello                 ...or by name (same as carts/hello)
-#   ./run --cart hello          the explicit switch form
-#   ./run --list                list available carts
-#   ./run --hud                 start with the debug overlay on
+#   ./bin/run                       boot the default cart
+#   ./bin/run carts/hello           boot a cart by path
+#   ./bin/run hello                 ...or by name (same as carts/hello)
+#   ./bin/run --cart hello          the explicit switch form
+#   ./bin/run --list                list available carts
+#   ./bin/run --hud                 start with the debug overlay on
 #
 # A cart is identified by a path to its directory, and a bare name is shorthand
 # for carts/<name>. Any cart directory works -- games/space, demos/space,
@@ -20,12 +20,12 @@
 # '--cart x' form keeps the ergonomics and never reaches the engine as
 # anything it cannot parse.
 #
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 DIR=$(pwd)
 DRAGONRUBY=$(dirname "$DIR")/dragonruby
 
 # Pass 1: find a cart argument. A bare argument is shorthand for --cart; an
-# explicit --cart wins, so `./run --cart foo foo` is left as the author meant.
+# explicit --cart wins, so `./bin/run --cart foo foo` is left as the author meant.
 CART=""
 HAVE_SWITCH=0
 for arg in "$@"; do
