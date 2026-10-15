@@ -4,6 +4,7 @@ rem  publish-console.bat -- release this console to the site. (Windows)
 rem
 rem    publish-console.bat                  package and send what is here now
 rem    publish-console.bat --dry-run        build the archive, send nothing
+rem    publish-console.bat --pack-only      build the archive, need no key
 rem    publish-console.bat --help
 rem
 rem  The counterpart of publish-site.bat: that one sends a cart, this one sends
@@ -19,6 +20,13 @@ rem  directory. What does go up is everything a person needs to run a console --
 rem  the library, the entry point, every script, the starter art, and a carts\
 rem  directory with a README in it. The list is explicit rather than "everything
 rem  but", so adding a file to the console is a decision.
+rem
+rem  --pack-only is how a site with nothing installed gets its first version.
+rem  This script needs dragonstation.json, that arrives only inside the bundle the
+rem  site serves, and the site serves a bundle only once it has a console version
+rem  to build one from. So on a fresh host this script cannot run at all. --pack-only
+rem  drops the credential requirement and leaves the ZIP in builds\, to be uploaded
+rem  at /admin/console_versions/new.
 rem
 rem  Administrators only. The site resolves the key to its owner on every request
 rem  and refuses anybody who is not one, so having this script is a convenience
@@ -41,6 +49,7 @@ set "VERSION_FILE=app\console\version.rb"
 set "WORK=%~dp0..\builds\tmp\publish-console"
 
 set "DRY_RUN=0"
+set "PACK_ONLY=0"
 
 :parse
 if "%~1"=="" goto parsed
@@ -48,6 +57,11 @@ if /i "%~1"=="--help" goto usage
 if /i "%~1"=="-h" goto usage
 if /i "%~1"=="--dry-run" (
   set "DRY_RUN=1"
+  shift
+  goto parse
+)
+if /i "%~1"=="--pack-only" (
+  set "PACK_ONLY=1"
   shift
   goto parse
 )
@@ -63,9 +77,16 @@ if errorlevel 1 (
 )
 
 rem --- credentials --------------------------------------------------------
+rem  Skipped only for --pack-only. --dry-run deliberately still reads the key,
+rem  because that is the point of a dry run: finding out now that the key is dead
+rem  rather than after a release has been built. --pack-only exists because this
+rem  script cannot run at all on a site with no console installed.
+if "!PACK_ONLY!"=="1" goto credentials_done
+
 if not exist "!CREDENTIALS!" (
   echo publish-console.bat: no !CREDENTIALS! in this console. 1>&2
   echo publish-console.bat: it comes in the download from the site. 1>&2
+  echo publish-console.bat: To build the archive without it, use --pack-only. 1>&2
   exit /b 2
 )
 
@@ -82,6 +103,8 @@ if "!RELEASE_URL!"=="" (
   echo publish-console.bat: only writes for an administrator. 1>&2
   exit /b 2
 )
+
+:credentials_done
 
 rem --- the version --------------------------------------------------------
 if not exist "!VERSION_FILE!" (
@@ -168,18 +191,29 @@ if errorlevel 1 (
 )
 
 for %%A in ("!ARCHIVE!") do echo publish-console: %%~nxA
-echo publish-console: sending to !RELEASE_URL!
 
-if "!DRY_RUN!"=="1" (
-  mkdir "%~dp0..\builds" 2>nul
-  copy /y "!ARCHIVE!" "%~dp0..\builds\console-!VERSION!.zip" >nul
+if "!DRY_RUN!"=="1" goto no_send
+if "!PACK_ONLY!"=="1" goto no_send
+
+echo publish-console: sending to !RELEASE_URL!
+goto send
+
+:no_send
+mkdir "%~dp0..\builds" 2>nul
+copy /y "!ARCHIVE!" "%~dp0..\builds\console-!VERSION!.zip" >nul
+if "!PACK_ONLY!"=="1" (
+  echo publish-console: --pack-only, nothing sent and no key needed
+  echo publish-console: upload it at /admin/console_versions/new on the site,
+  echo publish-console: then make it the default so downloads start working.
+) else (
   echo publish-console: --dry-run, nothing sent
-  echo publish-console: it is at %~dp0..\builds\console-!VERSION!.zip
-  rmdir /s /q "!WORK!"
-  exit /b 0
 )
+echo publish-console: it is at %~dp0..\builds\console-!VERSION!.zip
+rmdir /s /q "!WORK!"
+exit /b 0
 
 rem --- send ---------------------------------------------------------------
+:send
 set "RESPONSE=!WORK!\response.txt"
 curl -sS -o "!RESPONSE!" -w "%%{http_code}" -X POST "!RELEASE_URL!" ^
   -H "Authorization: Bearer !API_KEY!" ^
@@ -251,11 +285,15 @@ for /f "tokens=2 delims==" %%A in ('findstr /c:"%~2" "%~1"') do (
 goto :eof
 
 :usage
-echo usage: publish-console.bat [--dry-run]
+echo usage: publish-console.bat [--dry-run ^| --pack-only]
 echo        publish-console.bat --help
 echo.
-echo   --dry-run   build the archive and check the key, send nothing.
-echo   --help      this text.
+echo   --dry-run    build the archive and check the key, send nothing.
+echo   --pack-only  build the archive, send nothing, and need no key at all.
+echo                This is how a site with no console installed gets its first
+echo                version: upload the ZIP it leaves in builds\ at
+echo                /admin/console_versions/new.
+echo   --help       this text.
 echo.
 echo Packages this console and sends it to the site as a new version. Needs an
 echo administrator's key in dragonstation.json, and a version in

@@ -164,6 +164,24 @@ Bump `MAJOR`/`MINOR`/`PATCH` in `app/console/version.rb` first. The site reads
 the version from that same file and refuses one it already has, because a
 cartridge pinned to 0.1.0 has to keep running against 0.1.0 forever.
 
+#### The first version on a site
+
+A site with nothing installed cannot run this script, and that is a real
+deadlock rather than a missing step. `dragonstation.json` arrives only inside
+the console bundle the site serves, and the site serves a bundle only once it
+has a console version to build one from — so the tool that installs the first
+version is the one tool that cannot reach the site yet.
+
+`--pack-only` breaks it. It builds the same archive and needs no key at all:
+
+```sh
+./bin/publish-console --pack-only   # leaves the ZIP in builds/, sends nothing
+```
+
+Upload that ZIP at `/admin/console_versions/new`, make the version the default,
+and downloads start working — after which `dragonstation.json` arrives in your
+next bundle and `./bin/publish-console` behaves normally.
+
 **A version is a console, not a checkout.** The archive carries the library,
 the entry point, every script, the starter art and a `carts/` directory with a
 README in it -- and none of this machine: no `.git`, no `builds/`, no `shots/`,

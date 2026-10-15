@@ -3,6 +3,7 @@
 #
 #   ./bin/publish-console                 package and send what is here now
 #   ./bin/publish-console --dry-run       build the archive, send nothing
+#   ./bin/publish-console --pack-only     build the archive, need no key
 #   ./bin/publish-console --help
 #
 # This is the counterpart to ./bin/publish-site. That one sends a cart; this one
@@ -21,6 +22,13 @@
 # The version comes from app/console/version.rb and has to be new. The site
 # reads it from the same file and refuses a duplicate, so a release that forgot
 # to bump is caught there rather than after it has overwritten nothing.
+#
+# **--pack-only is how a site with nothing installed gets its first version.**
+# This script needs dragonstation.json, that arrives only inside the bundle the
+# site serves, and the site serves a bundle only once it has a console version
+# to build it from. So on a fresh host this script cannot run at all. --pack-only
+# drops the credential requirement and leaves the ZIP in builds/, to be uploaded
+# at /admin/console_versions/new -- the same install, reached through a browser.
 #
 # Administrators only. The site resolves the key to its owner on every request
 # and refuses anybody who is not one, so this script being in your checkout is a
@@ -42,11 +50,14 @@ die() {
 
 usage() {
   cat <<'USAGE'
-usage: ./bin/publish-console [--dry-run]
+usage: ./bin/publish-console [--dry-run | --pack-only]
        ./bin/publish-console --help
 
-  --dry-run   build the archive and check the key, send nothing.
-  --help      this text.
+  --dry-run    build the archive and check the key, send nothing.
+  --pack-only  build the archive, send nothing, and need no key at all. This is
+               how a site with no console installed gets its first version:
+               upload the ZIP it leaves in builds/ at /admin/console_versions/new.
+  --help       this text.
 
 Packages this console and sends it to the site as a new version. Needs an
 administrator's key in dragonstation.json, and a version in
@@ -61,6 +72,7 @@ json_string() {
 # --- arguments ------------------------------------------------------------
 
 DRY_RUN=0
+PACK_ONLY=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -69,6 +81,7 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     --dry-run) DRY_RUN=1 ;;
+    --pack-only) PACK_ONLY=1 ;;
     *) die "unknown argument '$1'  (try --help)" ;;
   esac
   shift
@@ -88,28 +101,39 @@ done
 
 # --- credentials ----------------------------------------------------------
 
-[ -f "$CREDENTIALS" ] || {
-  echo "publish-console: no $CREDENTIALS in this console." >&2
-  echo "publish-console: it comes in the download from the site -- sign in there and" >&2
-  echo "publish-console: unpack the bundle over this directory." >&2
-  exit 2
-}
+# The key is only skipped for --pack-only. --dry-run deliberately still reads
+# it, because that is the whole point of a dry run: to find out now that the key
+# is dead rather than after a release has been built. --pack-only exists because
+# this script cannot run at all on a site that has no console installed: the key
+# arrives inside the bundle the site serves, and the site serves a bundle only
+# once it has a version to build one from. Requiring a credential to reach the
+# point where the admin can upload a ZIP would be the same deadlock, one step
+# earlier.
+if [ "$PACK_ONLY" -eq 0 ]; then
+  [ -f "$CREDENTIALS" ] || {
+    echo "publish-console: no $CREDENTIALS in this console." >&2
+    echo "publish-console: it comes in the download from the site -- sign in there and" >&2
+    echo "publish-console: unpack the bundle over this directory. To build the archive" >&2
+    echo "publish-console: without it, use --pack-only." >&2
+    exit 2
+  }
 
-API_KEY=$(json_string "$CREDENTIALS" api_key)
-RELEASE_URL=$(json_string "$CREDENTIALS" release_url)
+  API_KEY=$(json_string "$CREDENTIALS" api_key)
+  RELEASE_URL=$(json_string "$CREDENTIALS" release_url)
 
-[ -n "$API_KEY" ] || die "$CREDENTIALS has no api_key."
-[ -n "$RELEASE_URL" ] || {
-  echo "publish-console: this key cannot release a console version." >&2
-  echo "publish-console: $CREDENTIALS has no release_url, which the site only writes" >&2
-  echo "publish-console: for an administrator. Download the bundle again if you are one." >&2
-  exit 2
-}
+  [ -n "$API_KEY" ] || die "$CREDENTIALS has no api_key."
+  [ -n "$RELEASE_URL" ] || {
+    echo "publish-console: this key cannot release a console version." >&2
+    echo "publish-console: $CREDENTIALS has no release_url, which the site only writes" >&2
+    echo "publish-console: for an administrator. Download the bundle again if you are one." >&2
+    exit 2
+  }
 
-case "$RELEASE_URL" in
-  http://* | https://*) ;;
-  *) die "release_url '$RELEASE_URL' is not an http(s) URL" ;;
-esac
+  case "$RELEASE_URL" in
+    http://* | https://*) ;;
+    *) die "release_url '$RELEASE_URL' is not an http(s) URL" ;;
+  esac
+fi
 
 # --- the version ----------------------------------------------------------
 
@@ -211,15 +235,24 @@ if [ "${COUNT:-0}" -gt 0 ] 2>/dev/null; then
 else
   echo "publish-console: console-$VERSION.zip, $SIZE bytes"
 fi
-echo "publish-console: sending to $RELEASE_URL"
 
-if [ "$DRY_RUN" -eq 1 ]; then
+if [ "$DRY_RUN" -eq 1 ] || [ "$PACK_ONLY" -eq 1 ]; then
   mkdir -p "$DIR/builds"
   cp -f "$ARCHIVE" "$DIR/builds/console-$VERSION.zip"
-  echo "publish-console: --dry-run, nothing sent"
+
+  if [ "$PACK_ONLY" -eq 1 ]; then
+    echo "publish-console: --pack-only, nothing sent and no key needed"
+    echo "publish-console: upload it at /admin/console_versions/new on the site,"
+    echo "publish-console: then make it the default so downloads start working."
+  else
+    echo "publish-console: --dry-run, nothing sent"
+  fi
+
   echo "publish-console: it is at $DIR/builds/console-$VERSION.zip"
   exit 0
 fi
+
+echo "publish-console: sending to $RELEASE_URL"
 
 # --- send -----------------------------------------------------------------
 
