@@ -8,3 +8,6 @@ builds/
 # and this says so where someone adding the next one will look).
 dragonstation.json
 
+shots/
+errors/
+

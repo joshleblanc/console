@@ -50,19 +50,34 @@ rem meant it rather than being doubled up.
 :collect
 if "%~1"=="" goto collected
 set "A=%~1"
-set "HEAD=%A:~0,1%"
+set "HEAD=!A:~0,1!"
 if "%HEAD%"=="-" goto keep
-if not defined CART set "CART=%A!"
+rem -- The FIRST bare argument is the cart. Every LATER bare argument is the
+rem -- VALUE of the switch before it, and must be carried through: dropping it
+rem -- turns `--ticks 90` into a bare `--ticks`, which the engine reads as
+rem -- "run forever" rather than "run 90 frames".
+if defined CART (
+  set "REST=!REST! !A!"
+) else (
+  set "CART=!A!"
+)
 goto next
 
 :keep
 if /i "!A!"=="--cart" set "HAVE_SWITCH=1"
 rem -- --cart=value  ->  --cart value, because the engine cannot parse the '=' form.
+rem --
+rem -- No inner quotes when accumulating REST. cmd's set "v=..." strips only the
+rem -- OUTERMOST quotes, so a nested " would survive into the value as a literal
+rem -- character. REST is then splatted unquoted on the launch line, and the
+rem -- engine receives an argument like "--ticks" with the quotes still attached
+rem -- and silently ignores it -- which looks exactly like "the switch was
+rem -- dropped". Quotes here buy nothing, because the engine re-splits argv anyway.
 if /i "!A:~0,7!"=="--cart=" (
-  set "REST=!REST! --cart "!A:~7!""
+  set "REST=!REST! --cart !A:~7!"
   goto next
 )
-set "REST=!REST! "!A!""
+set "REST=!REST! !A!"
 
 :next
 shift
@@ -75,7 +90,15 @@ if not "%HAVE_SWITCH%"=="0" goto launch_plain
 goto done
 
 :launch_plain
-"%DRAGONRUBY%" "%GAMEDIR%" !REST!
+rem -- HAVE_SWITCH means an explicit --cart was given, but its VALUE arrives as
+rem -- the next bare argument and lands in CART, so CART still has to be emitted
+rem -- here. Without this, `--cart carts\foo` reaches the engine as a bare
+rem -- `--cart` and the console silently falls back to another cart.
+if defined CART (
+  "%DRAGONRUBY%" "%GAMEDIR%" --cart "!CART!" !REST!
+) else (
+  "%DRAGONRUBY%" "%GAMEDIR%" !REST!
+)
 
 :done
 endlocal & exit /b %ERRORLEVEL%

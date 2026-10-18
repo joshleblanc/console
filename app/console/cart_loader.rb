@@ -78,7 +78,12 @@ module Console
     # path separator is taken as a path, which is what lets a cart live in
     # games/ or demos/ instead of carts/ without the console caring.
     def cart_dir(target)
-      s = Console::Str.chomp_slash target.to_s
+      # Normalise the separator FIRST. A Windows target arrives as carts\space
+      # (the README documents that form), and the test below only recognises
+      # '/', so a backslash target used to fall through as a bare NAME and
+      # resolve to carts/carts\space -- which does not exist, so the console
+      # silently booted the default cart instead of the one asked for.
+      s = Console::Str.chomp_slash target.to_s.gsub('\\', '/')
       return nil if s.empty?
       return s if s.include? '/'
       "#{CARTS_DIR}/#{s}"
