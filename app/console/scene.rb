@@ -204,13 +204,16 @@ module Console
       d = @defs[under]
       return unless d
       inst = instance_for under, d
-      dispatch :render, inst
+      # Pass d explicitly. Without it dispatch resolves @defs[@current] -- the
+      # OVERLAY -- so a block-kind scene underneath would fail its
+      # respond_to? check and silently not draw at all.
+      dispatch :render, inst, d
       draw_arg.rect x: 0, y: 0, w: @args.grid.w, h: @args.grid.h,
                      color: :black, alpha: 160
     end
 
-    def dispatch(hook, inst)
-      d = @defs[@current]
+    def dispatch(hook, inst, d = nil)
+      d ||= @defs[@current]
       return unless d
       if d.kind == :class
         return unless inst.respond_to?(hook)
@@ -225,15 +228,20 @@ module Console
 
     private
 
-    def activate(name)
+    def activate(name, resume = false)
       d = @defs[name]
       unless d
         puts "Console: scene #{name} is not defined; ignoring."
         return
       end
       @current_instance = instance_for name, d
-      dispatch :enter, @current_instance
-      (@enter_hooks[name.to_sym] || []).each { |h| h.call @current_instance }
+      # Resuming must NOT re-run `enter`. Everything the scene was holding
+      # lives on its instance, and re-entering would wipe it -- which is
+      # precisely the difference between pop (resume) and goto (restart).
+      unless resume
+        dispatch :enter, @current_instance
+        (@enter_hooks[name.to_sym] || []).each { |h| h.call @current_instance }
+      end
       # A scene may immediately request another change (common for routing
       # guards), so give it a chance before drawing anything.
       commit if pending?
@@ -265,7 +273,13 @@ module Console
     def instance_for(name, d)
       case d.kind
       when :class
-        d.klass.new
+        # Cached per scene name. A scene that was pushed over has to survive the
+        # trip, because pop_scene RESUMES it: building a fresh instance here
+        # would hand the resumed scene nil state, which is what made
+        # draw_below crash and left pop_scene rendering a frozen screen.
+        # `goto` clears this cache, so a hard restart still gets a clean slate.
+        @instances ||= {}
+        @instances[name] ||= d.klass.new
       when :block
         d.klass
       else
@@ -280,7 +294,7 @@ module Console
         top = @stack.pop
         leave top
         @current = @stack.last
-        @current_instance = nil
+        activate @current, true
         return
       end
 
@@ -290,7 +304,11 @@ module Console
         top = @stack.pop
         leave top
         @current = @stack.last
-        @current_instance = nil
+        # Resume, do not restart: re-activate the scene underneath WITHOUT
+        # running `enter`. Setting @current_instance = nil and returning here is
+        # what froze the screen -- every later dispatch then hit
+        # `return unless inst.respond_to?(hook)` on nil.
+        activate @current, true
         return
       end
 
@@ -307,6 +325,9 @@ module Console
         # reset the stack to just the new scene.
         leave @current if @current
         @stack = [name]
+        # ...and drop every cached scene instance. `goto` is a hard restart,
+        # so the destination must be entered fresh -- unlike pop, which resumes.
+        @instances = {}
       end
 
       @history.push @current
