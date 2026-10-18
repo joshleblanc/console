@@ -144,13 +144,18 @@ module Console
       @show_hud = !@show_hud
     end
 
-    # 2. scheduled work
-    tweens.update
+    # 2/3. scheduled work + animations.
+    #
+    # Frozen while a push_scene overlay is up. `after`, `every` and tweens are
+    # global to the console rather than scoped to the scene that registered
+    # them, so without this gate a pause froze the scene's `update` but let
+    # timers keep firing -- enemies stopped moving and kept despawning.
+    unless cart_uses_scenes? && scenes.overlay?
+      tweens.update
+      anim.update
+    end
 
-    # 3. animations
-    anim.update
-
-        # 4. gameplay + scene draw
+    # 4. gameplay + scene draw
     if cart_uses_scenes?
       scenes.run true
     else

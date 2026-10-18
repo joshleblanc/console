@@ -212,6 +212,15 @@ module Console
                      color: :black, alpha: 160
     end
 
+    # True when an overlay sits on top of the active scene. A push_scene overlay
+    # is a pause: the scene underneath stops updating, and the console freezes
+    # the schedulers to match. Without this, world logic driven by `after`,
+    # `every`, tweens or `animate` keeps running behind the overlay -- entities
+    # stop moving but keep dying, which is not a pause.
+    def overlay?
+      @stack.size > 1
+    end
+
     def dispatch(hook, inst, d = nil)
       d ||= @defs[@current]
       return unless d
