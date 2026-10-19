@@ -13,10 +13,12 @@
 # object (`draw.rect`, `draw.sprite`), and a scene that defined `draw` would
 # shadow it and recurse.
 #
-# A scene can be a Symbol paired with a class, a class, or a bare block set:
+# A scene is a class (instantiated on entry) or a Hash of hook lambdas, each
+# called with the Hash itself:
 #
 #   scene :title, TitleScene
 #   scene :play, PlayScene
+#   scene :credits, { render: ->(_) { Console.draw.text 'thanks', x: 10, y: 10 } }
 #
 #   goto :play                 # replace the whole stack
 #   push :pause                # overlay, keeps :play underneath
@@ -37,10 +39,11 @@ module Console
       @options = options
     end
 
-    # Build the per-scene instance. `kind` is :class, :block, or :none.
+    # Build the per-scene instance. `kind` is :class, :block (a Hash of hook
+    # lambdas, e.g. `{ update: ->(s) { ... } }`), or :none.
     def kind
       return :class if @klass.is_a?(Class)
-      return :block if @klass.respond_to?(:call)
+      return :block if @klass.is_a?(Hash)
       :none
     end
   end
@@ -229,7 +232,6 @@ module Console
         return unless inst.method(hook).arity == 0
         inst.send hook
       elsif d.kind == :block
-        return unless d.klass.respond_to?(:[])
         return unless d.klass.key?(hook)
         d.klass[hook].call inst
       end
@@ -256,27 +258,21 @@ module Console
       commit if pending?
     end
 
-    def leave(name)
+    def leave(name, inst = @current_instance)
       return if name.nil?
       d = @defs[name]
-      inst = @current_instance
-      if d
-        dispatch_leave d, inst
-      end
+      dispatch :leave, inst, d if d
       (@leave_hooks[name.to_sym] || []).each { |h| h.call inst }
-      @current_instance = nil
+      @current_instance = nil if inst.equal?(@current_instance)
     end
 
-    def dispatch_leave(d, inst)
-      if d.kind == :class
-        return unless inst.respond_to?(:leave)
-        return unless inst.method(:leave).arity == 0
-        inst.leave
-      elsif d.kind == :block
-        return unless d.klass.respond_to?(:[])
-        return unless d.klass.key?(:leave)
-        d.klass[:leave].call inst
-      end
+    # The live instance for a scene on the stack: the active one, or the cached
+    # instance of a scene paused underneath an overlay.
+    def instance_of(name)
+      return @current_instance if name == @current
+      d = @defs[name]
+      return nil unless d
+      d.kind == :block ? d.klass : (@instances || {})[name]
     end
 
     def instance_for(name, d)
@@ -299,9 +295,12 @@ module Console
     def commit
       if @pending_clear
         @pending_clear = false
-        return if @stack.empty?
-        top = @stack.pop
-        leave top
+        return if @stack.size <= 1
+        # Leave every overlay, top first, then resume the bottom scene.
+        while @stack.size > 1
+          top = @stack.pop
+          leave top, instance_of(top)
+        end
         @current = @stack.last
         activate @current, true
         return
@@ -330,9 +329,9 @@ module Console
         return if @stack.include?(name)
         @stack.push name
       else
-        # `goto` replaces the stack: leave whatever was actually active, then
-        # reset the stack to just the new scene.
-        leave @current if @current
+        # `goto` replaces the stack: leave every scene on it, top first, so a
+        # goto out of a pause overlay also runs the paused scene's `leave`.
+        @stack.reverse.each { |n| leave n, instance_of(n) }
         @stack = [name]
         # ...and drop every cached scene instance. `goto` is a hard restart,
         # so the destination must be entered fresh -- unlike pop, which resumes.

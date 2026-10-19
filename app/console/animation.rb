@@ -102,21 +102,34 @@ module Console
   end
 
   # The per-console registry of animations.
+  #
+  # Animations run on the registry's own clock, which advances once per
+  # `update`. Console#tick skips `update` while a push_scene overlay is up, so
+  # a paused scene's animations hold their frame instead of playing on (and
+  # finishing) behind the pause.
   class Anim
     def initialize(args)
       @args = args
       @by_id = {}
+      @entities = {}
       @definitions = {}
+      @clock = Kernel.tick_count
     end
 
     def tick_count
-      Kernel.tick_count
+      @clock
     end
 
     # Advance every active animation and apply finish handling.
     def update
-      tc = tick_count
-      @by_id.each_value { |frame| frame.update tc }
+      @clock += 1
+      tc = @clock
+      @by_id.keys.each do |id|
+        frame = @by_id[id]
+        next unless frame
+        next unless frame.update(tc)
+        finish frame, id
+      end
     end
 
     def active?(id)
@@ -159,15 +172,18 @@ module Console
       return nil unless spec
       frame = Frame.new spec, tick_count
       @by_id[id] = frame
+      @entities[id] = entity
       frame
     end
 
     def stop(id)
+      @entities.delete id
       @by_id.delete id
     end
 
     def stop_all
       @by_id = {}
+      @entities = {}
     end
 
     # The frame properties to merge into the entity's sprite primitive.
@@ -191,24 +207,46 @@ module Console
 
     private
 
+    # A one-shot finished. `on_finish:` names the state to play next (or is a
+    # callable taking the entity). The finished frame is dropped first, so its
+    # lock cannot refuse the follow-up it asked for.
+    def finish(frame, id)
+      follow = frame.on_finish
+      return unless follow
+      frame.on_finish = nil
+      entity = @entities[id]
+      return unless entity
+      if follow.respond_to?(:call)
+        # Keep the finished frame showing, but unlock it so a callable that
+        # animates the entity is not refused by the one-shot's own lock.
+        frame.locked_until = tick_count
+        follow.call entity
+      else
+        @by_id.delete id
+        play entity, follow
+      end
+    end
+
     def build_spec(entity, name, options)
       opts = {}
       options.each { |k, v| opts[k] = v }
       opts[:name] = name
 
-      # An explicit frame list (or sheet) short-circuits asset discovery.
-      if opts[:frames] && opts[:frames].size > 0
-        opts[:kind] ||= :sequence
-        opts[:frames] = opts[:frames]
-        opts[:frame_count] ||= opts[:frames].size
-        return opts
-      elsif opts[:sheet]
+      # A sheet is checked first: on a sheet, `frames:` is a frame COUNT
+      # (`frames: 6`), not a list of paths.
+      if opts[:sheet]
+        count = opts.delete(:frames)
         opts[:sheet] = Assets.resolve opts[:sheet]
         opts[:kind] = :sheet
-        opts[:frame_count] ||= opts[:frames]
+        opts[:frame_count] ||= count if count.is_a?(Numeric)
         opts[:frame_w] ||= entity[:w]
         opts[:frame_h] ||= entity[:h]
         return nil if opts[:frame_count].nil?
+        opts
+      elsif opts[:frames].is_a?(Array) && opts[:frames].size > 0
+        # An explicit frame list short-circuits asset discovery.
+        opts[:kind] ||= :sequence
+        opts[:frame_count] ||= opts[:frames].size
         opts
       else
         group = opts[:group] || animation_group(entity, name)

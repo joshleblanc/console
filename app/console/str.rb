@@ -131,7 +131,7 @@ module Console
       out
     end
 
-    # Pad/truncate to exactly `width` characters.
+    # Truncate to at most `width` characters.
     def fit(str, width)
       s = str.to_s
       return s[0, width] if s.length > width

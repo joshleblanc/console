@@ -10,8 +10,8 @@
 #
 # The scheduler handles deferred work, the other half of prototype ergonomics:
 #
-#   after 30 { spawn Enemy, x: 100, y: 100 }          # in half a second
-#   every 60, immediate: true { next_wave }
+#   after(30) { spawn Enemy, x: 100, y: 100 }         # in half a second
+#   every(60, immediate: true) { next_wave }
 module Console
   class Tween
     # Easing curves take a 0..1 progress and return 0..1.
@@ -68,11 +68,18 @@ module Console
       @loops = options[:loops] || 1
       @yoyo = options[:yoyo] ? true : false
       @cycle = 0
-      @started_at = options[:now] || Kernel.tick_count
+      # A tween owned by a TweenHost runs on the host's clock; a standalone
+      # one runs on the engine's.
+      @host = options[:host]
+      @started_at = options[:now] || current_tick
       @done = false
       @from = options.key?(:from) ? options[:from] : nil
       @origin = @from
       @reverse = false
+    end
+
+    def current_tick
+      @host ? @host.tick_count : Kernel.tick_count
     end
 
     # Lock in the value we are tweening away from.
@@ -94,8 +101,7 @@ module Console
       @done
     end
 
-    def progress(now = Kernel.tick_count)
-      return 0.0 if @duration == 0
+    def progress(now = current_tick)
       elapsed = now - @started_at - @delay
       return 0.0 if elapsed < 0
       p = elapsed.to_f / @duration
@@ -105,7 +111,7 @@ module Console
     # Advance to `now` (defaults to the current tick). Returns true while the
     # tween is still running. Passing an explicit tick makes tweens testable
     # without sleeping through real frames.
-    def update(now = Kernel.tick_count)
+    def update(now = current_tick)
       return false if @done
       return true if (now - @started_at) < @delay
 
@@ -124,10 +130,10 @@ module Console
           # Reverse direction, keeping the same endpoints, so an even number of
           # yoyo cycles lands back where it started.
           @reverse = !@reverse
-        else
-          # Re-loop from wherever the last pass finished.
-          @origin = @target[@property]
         end
+        # Without yoyo, every pass replays origin -> to. (Restarting from the
+        # value the last pass ended on would make every later pass a no-op,
+        # since `to` is absolute.)
         @started_at = now
         return true
       end
@@ -154,6 +160,11 @@ module Console
   end
 
   # The console's tween list plus its tick scheduler.
+  #
+  # Everything here runs on the host's own clock, which advances once per
+  # `update`. Console#tick skips `update` while a push_scene overlay is up, so
+  # a pause really is a pause: an `after 300` set just before it still has its
+  # remaining time afterwards, instead of firing the moment play resumes.
   class TweenHost
     attr_reader :tweens, :timers, :tickers
 
@@ -161,10 +172,11 @@ module Console
       @tweens = []
       @timers = []
       @tickers = []
+      @clock = Kernel.tick_count
     end
 
     def tick_count
-      Kernel.tick_count
+      @clock
     end
 
     # --- tweening ---------------------------------------------------------
@@ -172,17 +184,26 @@ module Console
     # Tween one property of a Hash-like target. Returns the Tween so callers
     # can cancel or inspect it.
     def tween(target, property, options = {})
-      t = Tween.new target, property, options
+      spec = options.merge(host: self)
+      spec[:now] = @clock unless options.key?(:now)
+      t = Tween.new target, property, spec
       t.capture!
       @tweens << t
       t
     end
 
-    # Tween several properties of one target with identical timing.
+    # Tween several properties of one target with identical timing. `from:`
+    # and `to:` may be arrays holding one value per property:
+    #
+    #   tween_all entity, %i[x y], from: [0, 0], to: [100, 50], in: 60
     def tween_all(target, properties, options = {})
+      i = -1
       properties.map do |prop|
+        i += 1
         spec = {}
         options.each { |k, v| spec[k] = v }
+        spec[:from] = options[:from][i] if options[:from].is_a?(Array)
+        spec[:to] = options[:to][i] if options[:to].is_a?(Array)
         tween target, prop, spec
       end
     end
@@ -245,7 +266,8 @@ module Console
     # Advance everything. Timers fire before tickers, which fire before
     # tweens, so a timer that starts a tween behaves predictably.
     def update
-      now = tick_count
+      @clock += 1
+      now = @clock
 
       due = @timers.select { |t| t[:at] <= now }
       @timers = @timers - due
@@ -257,7 +279,7 @@ module Console
         t[:block].call
       end
 
-      @tweens.each { |t| t.update }
+      @tweens.dup.each { |t| t.update now }
       @tweens.reject! { |t| t.done? }
     end
 

@@ -510,16 +510,14 @@ end
 #    the camera did nothing, and every cart carried its own hand-rolled `blit`.
 #    That is gone, along with the blit in this file.)
 #
-# 2. Console::Tween drives its target with `@target[:key]` (tween.rb:80, :145),
-#    i.e. Hash access, not send(). Console::Camera has attr_accessor :zoom but
-#    no #[], so `tween camera, :zoom, ...` still raises NoMethodError at
-#    capture!. The zoom punch tweens the plain Hash @cam and render copies it
-#    onto camera.zoom -- that half of the old workaround is still required.
+# 2. The zoom punch tweens the plain Hash @cam and render copies it onto
+#    camera.zoom. Console::Camera now answers [] / []=, so
+#    `tween camera, :zoom, ...` would work too; either is fine.
 #
-# 3. toward() is not on the console API mixin (only on EntityStore) and its
-#    Math.sin/cos convention disagrees with Geometry.angle, so homing entities
-#    fly AWAY from their lock with no error. The homing step computes dx/dy/len
-#    by hand.
+# 3. Homing computes dx/dy/len by hand. EntityStore#toward (now also a bare
+#    `toward` call) used to aim with sin/cos swapped against Geometry.angle and
+#    sent homing entities AWAY from their lock; it is fixed, so new carts can
+#    use it.
 #
 # 4. EntityStore holds no velocity and no lifetime of its own; `move` is manual
 #    and life is decremented by hand (see step_sparks).

@@ -5,7 +5,6 @@
 # usual split (world in `apply`, HUD after).
 #
 #   camera.look_at(entity)                 # follow an entity
-#   camera.within(100)                     # 100px of the world stays visible
 #   camera.shake(6, 12)                    # magnitude 6, 12 ticks
 #   camera.apply do
 #     draw.sprite(x: entity.x, y: entity.y, path: :hero)
@@ -29,7 +28,6 @@ module Console
       @bounds = nil
       @target_x = nil
       @target_y = nil
-      @margin = 100
       @offset_stack = []
       @follow = nil
     end
@@ -54,19 +52,13 @@ module Console
 
     # --- configuration ----------------------------------------------------
 
+    # The world rectangle the camera may show. nil means unbounded.
     def bounds=(value)
       @bounds = value
     end
 
-    # Set the world rectangle the camera is allowed to show.
-    def within(margin)
-      @margin = margin
-      self
-    end
-
     def unbounded
       @bounds = nil
-      @margin = 0
       self
     end
 
@@ -84,6 +76,10 @@ module Console
     def stop_following
       @follow = nil
       self
+    end
+
+    def following?
+      !@follow.nil?
     end
 
     # Point the camera at a world position (or an entity) for one frame.
@@ -160,6 +156,16 @@ module Console
         y: (sy - (screen_center_y * (1 - @zoom))) / @zoom + offset_y }
     end
 
+    # Hash-style access, so `tween camera, :zoom, to: 2.0` works like it does
+    # on any entity hash.
+    def [](key)
+      send key
+    end
+
+    def []=(key, value)
+      send "#{key}=", value
+    end
+
     # Pointer position in world space, accounting for camera and shake.
     def pointer_world
       p = @args.inputs.mouse
@@ -188,43 +194,39 @@ module Console
       active? ? @offset_stack.last : { x: 0, y: 0, zoom: 1.0 }
     end
 
-    # Screen bounds of the visible world area (for culling / minimaps).
+    # The world-space rect currently on screen (for culling / minimaps).
     def visible_rect
-      tl = to_world 0, grid.h
-      { x: tl[:x], y: tl[:y], w: grid.w / @zoom, h: grid.h / @zoom }
+      bl = to_world 0, 0
+      { x: bl[:x], y: bl[:y], w: grid.w / @zoom, h: grid.h / @zoom }
     end
 
-    # True when a world rect overlaps the visible area (with padding).
+    # True when a world rect overlaps the visible area.
     def visible?(r)
       v = visible_rect
-      r.x < v.x + v.w && (r.x + r.w) > v.x &&
-        r.y < v.y + v.h && (r.y + r.h) > v.y
+      r[:x] < v[:x] + v[:w] && (r[:x] + r[:w]) > v[:x] &&
+        r[:y] < v[:y] + v[:h] && (r[:y] + r[:h]) > v[:y]
     end
 
     private
 
+    # Keep the visible area inside @bounds. The view spans
+    # offset + c - c/zoom .. offset + c + c/zoom on each axis (c being the
+    # screen centre), so that is the range the offset is clamped to.
     def clamp_to_bounds
       return if @bounds.nil?
       return if @bounds[:x].nil? || @bounds[:y].nil?
-      half_w = screen_center_x
-      half_h = screen_center_y
-      min_x = @bounds[:x]
-      max_x = @bounds[:x] + @bounds[:w] - half_w
-      min_y = @bounds[:y]
-      max_y = @bounds[:y] + @bounds[:h] - half_h
-      # When the world is smaller than the view, centre it instead of clamping.
-      # When the world is smaller than the view on an axis, centre it there
-      # instead of clamping (which would otherwise pin it to one edge).
-      @x = if max_x < min_x
-             @bounds[:x] + ((@bounds[:w] - grid.w) / 2.0)
-           else
-             @x.clamp(min_x, max_x)
-           end
-      @y = if max_y < min_y
-             @bounds[:y] + ((@bounds[:h] - grid.h) / 2.0)
-           else
-             @y.clamp(min_y, max_y)
-           end
+      @x = clamp_axis @x, @bounds[:x], @bounds[:w], screen_center_x
+      @y = clamp_axis @y, @bounds[:y], @bounds[:h], screen_center_y
+    end
+
+    def clamp_axis(value, start, size, half)
+      view_half = half / @zoom
+      min = start - half + view_half
+      max = start + size - half - view_half
+      # A world smaller than the view on this axis is centred, not pinned to
+      # one edge.
+      return start + (size / 2.0) - half if max < min
+      value.clamp(min, max)
     end
   end
 end

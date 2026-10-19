@@ -27,19 +27,15 @@ module Console
     end
 
     def center_x(r)
-      center(r).x
+      center(r)[:x]
     end
 
     def center_y(r)
-      center(r).y
+      center(r)[:y]
     end
 
     def right(r)
       r[:x] + r[:w]
-    end
-
-    def top(r)
-      r[:y] + r[:h]
     end
 
     def area(r)

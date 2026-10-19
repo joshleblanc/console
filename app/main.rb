@@ -9,7 +9,8 @@
 #
 #   1. --cart <name>        ./bin/run --cart hello
 #   2. CART=<name> env var
-#   3. the FIRST cart found in carts/ (so a fresh checkout always runs)
+#   3. the selftest cart, or else the first cart found in carts/ (so a fresh
+#      checkout always runs)
 #
 # Each cart is a directory: carts/<name>/app/<name>.rb, owning its own sprites,
 # sounds, maps and data. Console::Assets is what makes 'sprites/foo.png' mean

@@ -59,10 +59,10 @@ module Console
         if info[:file_type] == :directory
           walk full, key
         else
-          base = key
-          ext = base.split('.').last
-          stem = base[0, base.length - ext.length - 1]
-          # Register the extension-less key, preferring the shallowest match.
+          # Register the extension-less key too, preferring the shallowest
+          # match. A file with no extension only has the one key.
+          dot = key.rindex('.')
+          stem = dot && dot > 0 ? key[0, dot] : key
           @registry[stem] ||= full
           @registry[key] ||= full
         end
@@ -171,11 +171,12 @@ module Console
       frames(group).size > 1
     end
 
-    # True if every entry in `name` looks like an indexed frame.
+    # The frame number a filename sorts by: '3.png' and 'run-3.png' are both
+    # frame 3. Anything without a trailing number sorts last.
     def numeric_prefix(filename)
-      stem = filename.split('.').first
-      num = stem.split('-').last.to_i
-      Console::Str.digits?(stem) ? num : 9999
+      stem = filename.split('.').first.to_s
+      num = stem.split('-').last.to_s
+      Console::Str.digits?(num) ? num.to_i : 9999
     end
 
     # --- procedural generation -------------------------------------------

@@ -274,11 +274,8 @@ end
 #    following camera would pan away the corpses you already raised, and
 #    reading which ones are about to topple is the entire decision.
 #
-# 2. Scene changes use goto, not push_scene/pop_scene. pop_scene nils
-#    @current_instance without re-activating the scene underneath
-#    (scene.rb:293), so every later dispatch returns early on nil and the
-#    screen freezes grey with no exception. Console.scenes.draw_below is also
-#    unusable: it builds a FRESH instance of the scene below
-#    (scene.rb:268, `d.klass.new`), so that instance has nil ivars and its
-#    render hook raises.
+# 2. Scene changes use goto, not push_scene/pop_scene. (This was once a
+#    workaround: pop_scene used to freeze the screen and draw_below built a
+#    fresh, empty instance. Both are fixed -- pop resumes the cached instance --
+#    so goto is now simply the fit for a game with no pause overlay.)
 # ---------------------------------------------------------------------------

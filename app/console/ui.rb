@@ -266,19 +266,13 @@ module Console
       hovered = !disabled && input.pointer_inside?(r)
       focused = store['ui_focus'] == key
 
-      if hovered
-        store[key] = true
-      end
       if input.pointer_pressed? && hovered
         store['ui_focus'] = key
         focused = true
       end
-      if input.pressed?(:cancel)
-        store.delete key
+      if focused && input.pressed?(:cancel)
+        store.delete 'ui_focus'
         focused = false
-      end
-      if focused && input.pressed?(:accept)
-        store['ui_focus'] = key
       end
 
       clicked = false
@@ -314,9 +308,9 @@ module Console
       y = opts[:y] || 0
       key = opts.delete(:key)
       text = opts.delete(:text) || ''
-      box = opts.delete(:box) || 22
+      size = opts.delete(:box) || 22
 
-      r = box(opts, box, box)
+      r = box(opts, size, size)
       x = r[:x]
       y = r[:y]
       value = store[key] ? true : false
@@ -327,7 +321,7 @@ module Console
       end
       draw.border r.merge(color: Style.get(:accent)), 2
       draw.rect Geom.inset(r, 5).merge(color: Style.get(:accent)) if value
-      draw.text text, x: x + box + 10, y: y + (box / 2.0), anchor_y: 0.5
+      draw.text text, x: x + size + 10, y: y + (size / 2.0), anchor_y: 0.5
       { rect: r, value: value, changed: clicked }
     end
 
@@ -352,14 +346,20 @@ module Console
       index = 0 if index < 0
       index = items.size - 1 if items.size > 0 && index > items.size - 1
 
-      anchor = box(opts, width, row_h)
+      # The box covers every row, so `y:` is its bottom edge and `top:` its top
+      # edge, like every other widget. Rows run top-down -- item 0 on top --
+      # which is the order :up/:down navigate in.
+      count = items.size
+      total_h = count > 0 ? (count * (row_h + gap)) - gap : row_h
+      anchor = box(opts, width, total_h)
       x = anchor[:x]
       y = anchor[:y]
+      top_y = y + total_h
 
       rects = []
       hovered_index = -1
       items.each_with_index do |item, i|
-        cell = { x: x, y: y + (i * (row_h + gap)), w: width, h: row_h }
+        cell = { x: x, y: top_y - row_h - (i * (row_h + gap)), w: width, h: row_h }
         rects << cell
         hovered_index = i if input.pointer_inside?(cell)
       end
@@ -398,7 +398,6 @@ module Console
                   color: (selected ? :dark : Style.get(:text))
       end
 
-      total_h = (rects.size * (row_h + gap)) - gap
       { index: index, clicked: clicked, items: rects, labels: items,
         rect: { x: x, y: y, w: width, h: total_h },
         hovered: hovered_index >= 0 }

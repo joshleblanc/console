@@ -76,11 +76,19 @@ goto :eof
 :boot
 rem  Each cart's whole output goes to the log, so a failure can show the
 rem  complete trace rather than a couple of grepped lines.
+rem
+rem  dragonruby.exe is a GUI program on Windows, so its stdout is not inherited
+rem  and the redirect captures nothing -- which used to report every cart as
+rem  ok, crashed or not. The engine mirrors its output (exceptions included)
+rem  into ..\logs\console.log, which is cleared per cart and read instead.
+set "DRLOG=%CD%\..\logs\console.log"
+if exist "%DRLOG%" del /q "%DRLOG%" >nul 2>&1
 "%DRAGONRUBY%" "%GAMEDIR%" --cart "%~1" --ticks "%TICKS%" >"%LOG%" 2>&1
+for %%A in ("%LOG%") do if %%~zA==0 if exist "%DRLOG%" type "%DRLOG%" >"%LOG%"
 
 findstr /i /l /c:"EXCEPTION" "%LOG%" >nul 2>&1
 if errorlevel 1 (
-  echo ok    %~1  (%TICKS% frames)
+  echo ok    %~1  ^(%TICKS% frames^)
   goto :eof
 )
 

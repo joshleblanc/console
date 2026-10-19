@@ -23,9 +23,7 @@ module Console
       @actions = {}
       @text_buffer = []
       @device = :keyboard
-      @pointer_down_prev = false
       @text_enabled = false
-      @text_buffer = []
       ACTIONS.each { |a| @actions[a] = new_action }
     end
 
@@ -67,9 +65,11 @@ module Console
       set :pause, k.key_down_or_held?(:escape) || pad_held?(:start)
       set :debug_toggle, k.key_down_or_held?(:f1)
 
-      # Shoulder/menu buttons.
+      # Shoulder/menu buttons. Keyboard bindings stay clear of WASD, which
+      # args.inputs already folds into the directions: binding W here made
+      # every step up also fire action_2.
       set :action_1, k.key_down_or_held?(:q) || pad_held?(:l1)
-      set :action_2, k.key_down_or_held?(:w) || pad_held?(:r1)
+      set :action_2, k.key_down_or_held?(:e) || pad_held?(:r1)
       set :action_3, pad_held?(:l2)
       set :action_4, pad_held?(:r2)
 
@@ -107,7 +107,7 @@ module Console
 
     def released?(action)
       a = @actions[action]
-      a[:released] && !a[:held] ? true : false
+      a && a[:released] && !a[:held] ? true : false
     end
 
     def any_pressed?(*list)
@@ -139,7 +139,7 @@ module Console
     # --- pointer ---------------------------------------------------------
 
     # A single pointer abstraction covering mouse and first touch point.
-    # x/y are in screen space, already offset by the console camera.
+    # x/y are in screen space; use camera.to_world for world coordinates.
     def pointer
       @pointer
     end
@@ -236,7 +236,6 @@ module Console
       down = m.button_left
       pressed = m.key_down.left
       released = m.key_up.left
-      @pointer_down_prev = down
       @pointer = { x: x, y: y, down: down, pressed: pressed, released: released }
     end
   end

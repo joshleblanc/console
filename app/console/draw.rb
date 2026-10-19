@@ -205,7 +205,6 @@ module Console
     def sprite_sheet_frame(spec = {})
       fw = spec[:frame_w]
       fh = spec[:frame_h]
-      cols = spec[:frame_count] || 1
       i = spec[:frame_index] || 0
       sprite(spec.merge(source_x: i * fw,
                         source_y: 0,
@@ -369,10 +368,6 @@ module Console
       r
     end
 
-    def absolute(r)
-      { x: r[:x], y: r[:y], w: r[:w], h: r[:h] }
-    end
-
     def strip_color(spec)
       out = {}
       spec.each { |k, v| out[k] = v unless k == :color || k == :alpha }
@@ -381,6 +376,12 @@ module Console
 
     def natural_size(path, w, h)
       return [w, h] if w && h
+      # Generated textures are not files, so get_sprite_rect cannot measure
+      # them; without this a procedural sprite drawn without w/h was 0x0.
+      if path.is_a?(Symbol) && Sprites.generated?(path)
+        nw, nh = Sprites.size(path, @args)
+        return [w || nw, h || nh]
+      end
       begin
         natural = DR.get_sprite_rect path
         return [w, natural.h] if w && natural.h

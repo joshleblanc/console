@@ -157,7 +157,10 @@ module Console
     # --- running ----------------------------------------------------------
 
     def run
-      handle_list if switch?(:list)
+      if switch?(:list)
+        handle_list
+        return nil
+      end
 
       target = requested_name
       dir = cart_dir target
@@ -340,21 +343,14 @@ module Console
       Console::Str.quoted_value_after(source, 'TITLE')
     end
 
-    def handle_test
-      summary = run_selftest
-      puts Console::Test.summary_line(summary)
-      quit_now(summary[:status] == 'PASS')
-    end
-
     def abort_boot(message)
       puts "[console] BOOT ERROR: #{message}"
       @errors << message
       DR.request_quit
     end
 
-    def quit_now(ok = true)
+    def quit_now(_ok = true)
       DR.request_quit
-      @quit_status = ok ? 0 : 1
     end
 
     # Is a switch present?
