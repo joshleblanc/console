@@ -15,4 +15,5 @@ dragonstation.json
 # checkout.
 carts/*
 !carts/.keep/
+*.zip
 
