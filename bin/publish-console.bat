@@ -15,11 +15,12 @@ rem
 rem  A version is permanent. The site refuses to replace one, because a cartridge
 rem  pinned to 0.1.0 has to keep running against 0.1.0 forever. So nothing that
 rem  describes this machine goes up: no .git, no builds\, no shots\, no
-rem  errors\last.txt, no carts, and not the publishing key sitting in this
-rem  directory. What does go up is everything a person needs to run a console --
-rem  the library, the entry point, every script, the starter art, and a carts\
-rem  directory with a README in it. The list is explicit rather than "everything
-rem  but", so adding a file to the console is a decision.
+rem  errors\last.txt, no carts of your own, and not the publishing key sitting
+rem  in this directory. What does go up is everything a person needs to run a
+rem  console -- the library, the entry point, every script, the starter art,
+rem  the sample carts, and a carts\ directory with a README in it. The list is
+rem  explicit rather than "everything but", so adding a file to the console is a
+rem  decision.
 rem
 rem  --pack-only is how a site with nothing installed gets its first version.
 rem  This script needs dragonstation.json, that arrives only inside the bundle the
@@ -129,7 +130,7 @@ for %%D in (app\console bin sprites metadata) do (
     exit /b 1
   )
 )
-for %%F in (app\main.rb carts\README.md sprites) do (
+for %%F in (app\main.rb carts\.keep\README.md samples sprites) do (
   if not exist "%%F" (
     echo publish-console.bat: %%F is missing. A version is a whole console, 1>&2
     echo publish-console.bat: not just its library. 1>&2
@@ -154,7 +155,7 @@ powershell -NoProfile -Command ^
   "Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem;" ^
   "$root = (Get-Location).Path;" ^
   "$paths = @('app/main.rb','app/console','bin','sprites','metadata'," ^
-  "  'errors/readme.txt','carts/README.md','font.ttf','tiny.ttf'," ^
+  "  'errors/readme.txt','carts/.keep','samples','font.ttf','tiny.ttf'," ^
   "  'README.md','.gitignore','.gitattributes');" ^
   "$junk = @('.DS_Store','__MACOSX','last.txt','dragonstation.json');" ^
   "$z = [IO.Compression.ZipFile]::Open('!ARCHIVE!', 'Create');" ^
@@ -164,7 +165,7 @@ powershell -NoProfile -Command ^
   "    [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $full, $p, 'Optimal') | Out-Null;" ^
   "  } elseif (Test-Path -LiteralPath $full -PathType Container) {" ^
   "    Get-ChildItem -LiteralPath $full -Recurse -File |" ^
-  "      Where-Object { $junk -notcontains $_.Name -and $junk -notcontains $_.Directory.Name } |" ^
+  "      Where-Object { $junk -notcontains $_.Name -and $junk -notcontains $_.Directory.Name -and $_.Extension -ne '.zip' } |" ^
   "      ForEach-Object {" ^
   "        $rel = $_.FullName.Substring($root.Length + 1).Replace([char]92, '/');" ^
   "        [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $_.FullName, $rel, 'Optimal') | Out-Null };" ^

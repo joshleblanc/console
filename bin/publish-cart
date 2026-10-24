@@ -32,6 +32,7 @@ DIR=$(pwd)
 ROOT=$(dirname "$DIR")
 DRAGONRUBY_PUBLISH="$ROOT/dragonruby-publish"
 CARTS_DIR="carts"
+SAMPLES_DIR="samples"
 STAGE_ROOT="$ROOT/builds/cart-staging"
 
 die() {
@@ -39,13 +40,24 @@ die() {
   exit 1
 }
 
-# Cart names in the default gallery, sorted. Derived from the filesystem every
-# run so a newly added cart is publishable without touching this script. A
+# Cart directories in both galleries, sorted: your own in carts/ and the
+# samples the console ships in samples/. Derived from the filesystem every run
+# so a newly added cart is publishable without touching this script. A
 # directory without an entry file is not a cart.
+#
+# Paths, not names: a cart of yours can share a name with a sample, and the
+# path is what says which one is meant.
 carts() {
-  ls -d "$CARTS_DIR"/*/ 2>/dev/null | sed 's|/$||; s|.*/||' | sort | while read -r c; do
-    [ -n "$(cart_entry "$CARTS_DIR/$c")" ] && echo "$c"
-  done
+  for gallery in "$CARTS_DIR" "$SAMPLES_DIR"; do
+    for dir in "$gallery"/*/; do
+      [ -d "$dir" ] || continue
+      dir=${dir%/}
+      name=${dir##*/}
+      if [ -f "$dir/app/main.rb" ] || [ -f "$dir/app/$name.rb" ]; then
+        echo "$dir"
+      fi
+    done
+  done | sort
 }
 
 # A cart's entry file, app/main.rb preferred. Same order the loader uses.
@@ -57,12 +69,21 @@ cart_entry() {
   fi
 }
 
-# A name or a path, resolved the way the loader resolves it: a bare name is the
-# gallery shorthand for carts/<name>.
+# A name or a path, resolved the way the loader resolves it: a bare name is
+# looked up in carts/ first and in samples/ second, so the same name means the
+# same cart here as it does when the cart is booted.
 cart_dir() {
   case "$1" in
     */*) printf '%s' "$1" ;;
-    *) printf '%s/%s' "$CARTS_DIR" "$1" ;;
+    *)
+      if [ -n "$(cart_entry "$CARTS_DIR/$1")" ]; then
+        printf '%s/%s' "$CARTS_DIR" "$1"
+      elif [ -n "$(cart_entry "$SAMPLES_DIR/$1")" ]; then
+        printf '%s/%s' "$SAMPLES_DIR" "$1"
+      else
+        printf '%s/%s' "$CARTS_DIR" "$1"
+      fi
+      ;;
   esac
 }
 
@@ -308,9 +329,12 @@ verify_staging() {
   # this catches a cart reaching out and pulling one in. It matches require
   # calls rather than the bare string, because the console library documents
   # paths like 'carts/<name>/' in its own comments and those are not references.
+  #
+  # The cart being published is staged as carts/<name>, so that one directory
+  # is the cart's own and is not flagged; every other gallery path is.
   for other in $(carts); do
-    [ "$other" = "$CART" ] && continue
-    if grep -rlE "require[[:space:]]+['\"]carts/$other/" "$STAGE" >/dev/null 2>&1; then
+    [ "$other" = "$CARTS_DIR/$CART" ] && continue
+    if grep -rlE "require[[:space:]]+['\"]$other/" "$STAGE" >/dev/null 2>&1; then
       echo "publish-cart: ABORT staged build requires cart '$other'" >&2
       return 1
     fi
@@ -343,7 +367,7 @@ verify_assets() {
     for m in $missing; do
       echo "    $m  (missing from $cart_dir)" >&2
     done
-    echo "    move them into carts/$CART/, or the build will not have them" >&2
+    echo "    move them into $CART_SRC/, or the build will not have them" >&2
     return 1
   fi
 

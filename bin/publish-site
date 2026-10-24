@@ -28,6 +28,7 @@ DIR=$(pwd)
 
 CREDENTIALS="dragonstation.json"
 CARTS_DIR="carts"
+SAMPLES_DIR="samples"
 # Same reason update-library stages under builds/: it is already ignored, and it
 # is on the same filesystem as the cart so moving the archive into place is a
 # rename rather than a copy.
@@ -60,22 +61,27 @@ json_string() {
   sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$1" | head -1
 }
 
+# The carts that could be sent: your own in carts/ and the samples the console
+# ships in samples/. Paths, not names: a cart of yours can share a name with a
+# sample, and the path is what says which one is meant.
 list_carts() {
-  [ -d "$CARTS_DIR" ] || die "no carts/ directory in this console"
-
   found=""
-  for entry in "$CARTS_DIR"/*/; do
-    [ -d "$entry" ] || continue
-    name=$(basename "$entry")
-    # A cart directory is one with an entry file; anything else in carts/ is
-    # scratch, and publish-cart refuses it for the same reason.
-    if [ -f "$entry/app/$name.rb" ]; then
-      found="$found $name"
-      echo "  $name"
-    fi
+  for gallery in "$CARTS_DIR" "$SAMPLES_DIR"; do
+    [ -d "$gallery" ] || continue
+    for entry in "$gallery"/*/; do
+      [ -d "$entry" ] || continue
+      name=$(basename "$entry")
+      # A cart directory is one with an entry file; anything else in the
+      # gallery is scratch, and publish-cart refuses it for the same reason.
+      if [ -f "$entry/app/$name.rb" ]; then
+        found="$found $entry"
+        echo "  ${entry%/}"
+      fi
+    done
   done
 
-  [ -n "$found" ] || die "no carts in $CARTS_DIR (a cart is a directory with app/<name>.rb)"
+  [ -n "$found" ] ||
+    die "no carts in $CARTS_DIR or $SAMPLES_DIR (a cart is a directory with app/<name>.rb)"
 }
 
 # --- arguments ------------------------------------------------------------
@@ -123,10 +129,20 @@ fi
   die "name a cart to send"
 }
 
-# A bare name is shorthand for carts/<name>, the same translation run does.
+# A bare name is shorthand for carts/<name>, the same translation run does --
+# with the samples as the fallback, so the same name means the same cart here
+# as it does when the cart is booted.
 case "$CART" in
   */*) CART_DIR="$CART" ;;
-  *) CART_DIR="$CARTS_DIR/$CART" ;;
+  *)
+    if [ -f "$CARTS_DIR/$CART/app/$CART.rb" ]; then
+      CART_DIR="$CARTS_DIR/$CART"
+    elif [ -f "$SAMPLES_DIR/$CART/app/$CART.rb" ]; then
+      CART_DIR="$SAMPLES_DIR/$CART"
+    else
+      CART_DIR="$CARTS_DIR/$CART"
+    fi
+    ;;
 esac
 
 [ -d "$CART_DIR" ] || die "no such cart: $CART_DIR"

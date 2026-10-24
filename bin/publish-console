@@ -15,9 +15,10 @@
 # permanent: the site refuses to replace one, because a cartridge pinned to
 # 0.1.0 has to keep running against 0.1.0 forever. So nothing that describes
 # this machine goes up -- no .git, no builds/, no shots/, no errors/last.txt, no
-# carts/, and not the publishing key sitting in this directory. What does go up
-# is everything a person needs to run a console: the library, the entry point,
-# every script, the starter art, and a carts/ directory with a README in it.
+# carts of your own, and not the publishing key sitting in this directory. What
+# does go up is everything a person needs to run a console: the library, the
+# entry point, every script, the starter art, the sample carts, and a carts/
+# directory with a README in it.
 #
 # The version comes from app/console/version.rb and has to be new. The site
 # reads it from the same file and refuses a duplicate, so a release that forgot
@@ -157,9 +158,9 @@ VERSION="${VERSION#.}"
 # The exclusion list is explicit rather than a rule like "everything but" so
 # that adding a file to the console is a decision -- it does not start shipping
 # to every reader because nobody remembered to exclude it.
-CONTENTS="app/main.rb app/console bin sprites metadata errors/readme.txt carts/README.md font.ttf tiny.ttf README.md .gitignore .gitattributes"
+CONTENTS="app/main.rb app/console bin sprites metadata errors/readme.txt carts/.keep samples font.ttf tiny.ttf README.md .gitignore .gitattributes"
 
-for required in app/main.rb app/console/version.rb app/console/core.rb bin/run carts/README.md sprites; do
+for required in app/main.rb app/console/version.rb app/console/core.rb bin/run carts/.keep/README.md samples sprites; do
   [ -e "$required" ] ||
     die "$required is missing. A version is a whole console, not just its library."
 done
@@ -186,9 +187,14 @@ case "$ZIP_TOOL" in
   zip)
     # -X drops the extra fields a macOS zip writes. The list is the console,
     # never the directory it happens to be sitting in.
+    #
+    # *.zip is excluded because a cart that ships as a directory does not also
+    # ship as a stale archive of itself: samples/arcade.zip is a leftover of
+    # the arcade cart, which is already in samples/arcade/.
     # shellcheck disable=SC2086
     (cd "$DIR" && zip -q -r -X "$ARCHIVE" $CONTENTS \
       -x "*/.DS_Store" -x "__MACOSX/*" -x "*/errors/last.txt" \
+         -x "*.zip" \
          -x "$CREDENTIALS_PATH") ||
       die "zip failed"
     ;;
@@ -198,7 +204,7 @@ import os, sys, zipfile
 
 root, archive, credentials = sys.argv[1], sys.argv[2], sys.argv[3]
 PATHS = ["app/main.rb", "app/console", "bin", "sprites", "metadata",
-         "errors/readme.txt", "carts/README.md", "font.ttf", "tiny.ttf",
+         "errors/readme.txt", "carts/.keep", "samples", "font.ttf", "tiny.ttf",
          "README.md", ".gitignore", ".gitattributes"]
 JUNK = {".DS_Store", "__MACOSX", "last.txt", credentials}
 
@@ -212,6 +218,11 @@ with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
                 dirs[:] = [d for d in dirs if d not in JUNK]
                 for name in sorted(files):
                     if name in JUNK:
+                        continue
+                    # A cart that ships as a directory does not also ship as a
+                    # stale archive of itself: samples/arcade.zip is a leftover
+                    # of the arcade cart, which is already in samples/arcade/.
+                    if name.endswith(".zip"):
                         continue
                     full = os.path.join(directory, name)
                     z.write(full, os.path.relpath(full, root))

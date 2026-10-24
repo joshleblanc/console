@@ -1,16 +1,21 @@
 # Console::CartLoader -- finds a cart, requires it, and starts the console.
 #
-# A "cart" is a directory under carts/ that defines one module (or class)
-# implementing the cart contract:
+# A "cart" is a directory that defines one module (or class) implementing the
+# cart contract:
 #
 #   carts/space/
 #     app/space.rb        the cart: one module/class named after the directory
 #     sprites/            its own art
 #     sounds/  maps/  data/
 #
+# Carts are read from two directories: carts/, which is yours and is not
+# tracked by the console's repository, and samples/, which ships with the
+# console. Your carts are looked up first, so a cart of yours shadows a sample
+# of the same name, and a fresh checkout still has the samples to boot.
+#
 # Only the selected cart is ever required, so a cart is genuinely a standalone
-# program: nothing else in carts/ is parsed at runtime, so a broken cart can
-# never stop the console from booting, and two carts can both have a
+# program: nothing else in the gallery is parsed at runtime, so a broken cart
+# can never stop the console from booting, and two carts can both have a
 # `sprites/hero.png` without seeing each other's.
 #
 # The contract is intentionally tiny. All of these hooks are optional:
@@ -30,7 +35,13 @@
 module Console
   class CartLoader
     CARTS_DIR = 'carts'
+    SAMPLES_DIR = 'samples'
     DEFAULT_CART = 'selftest'
+
+    # Where a bare cart name is looked up, in order. Your own carts come
+    # first: a cart of yours shadows a sample of the same name, which is how
+    # you take a sample over (copy it into carts/) without renaming it.
+    GALLERY_DIRS = [CARTS_DIR, SAMPLES_DIR].freeze
 
     attr_reader :args, :errors
 
@@ -74,14 +85,28 @@ module Console
 
     # Turn whatever was asked for into a cart directory.
     #
-    # A bare name means the gallery: 'space' is carts/space. Anything with a
-    # path separator is taken as a path, which is what lets a cart live in
-    # games/ or demos/ instead of carts/ without the console caring.
+    # A bare name means the gallery: 'space' is carts/space, or samples/space
+    # when you have no cart of that name. Anything with a path separator is
+    # taken as a path, which is what lets a cart live in games/ or demos/
+    # instead of carts/ without the console caring.
     def cart_dir(target)
-      s = Console::Str.chomp_slash target.to_s
+      s = Console::Str.chomp_slash Console::Str.backslash_to_slash(target)
       return nil if s.empty?
       return s if s.include? '/'
-      "#{CARTS_DIR}/#{s}"
+      gallery_dir s
+    end
+
+    # Where a bare cart name lives: carts/ first, then samples/.
+    #
+    # The last resort is carts/<name> even when nothing is there, so a name
+    # that matches nothing still reports the path the user expected -- and
+    # the fallback in run can say what it looked for.
+    def gallery_dir(name)
+      GALLERY_DIRS.each do |dir|
+        candidate = "#{dir}/#{name}"
+        return candidate if cart? candidate
+      end
+      "#{CARTS_DIR}/#{name}"
     end
 
     # The cart's name is the last segment of its directory, which is also the
@@ -108,20 +133,34 @@ module Console
       !DR.stat_file(cart_entry(dir)).nil?
     end
 
-    # Cart names in the default gallery, sorted. Only directories with an entry
-    # file count, so a half-created cart or a stray README in carts/ is simply
-    # not a cart.
+    # Cart names in the gallery, sorted.
+    #
+    # Both directories count: your carts in carts/ and the samples the console
+    # ships in samples/. A name is listed once even when it is in both, and
+    # the one in carts/ is the one that runs -- so taking a sample over by
+    # copying it into carts/ does not double it up in the list.
+    #
+    # Only directories with an entry file count, so a half-created cart or a
+    # stray README in carts/ is simply not a cart.
     def available
-      return [] unless DR.stat_file(CARTS_DIR)
       names = []
-      DR.list_files(CARTS_DIR).each do |entry|
-        info = DR.stat_file "#{CARTS_DIR}/#{entry}"
-        next unless info
-        next unless info[:file_type] == :directory
-        next unless cart?("#{CARTS_DIR}/#{entry}")
-        names << entry
+      GALLERY_DIRS.each do |dir|
+        next unless DR.stat_file(dir)
+        DR.list_files(dir).each do |entry|
+          info = DR.stat_file "#{dir}/#{entry}"
+          next unless info
+          next unless info[:file_type] == :directory
+          next unless cart?("#{dir}/#{entry}")
+          names << entry unless names.include?(entry)
+        end
       end
       names.sort
+    end
+
+    # Is this cart one of the samples rather than one of your own?
+    def sample?(name)
+      dir = cart_dir name
+      !dir.nil? && dir.start_with?("#{SAMPLES_DIR}/")
     end
 
     # Explicit wins, then the env var, then a deterministic fallback.
@@ -169,7 +208,7 @@ module Console
         available_names = available
         fallback = available_names.include?(DEFAULT_CART) ? DEFAULT_CART : available_names.first
         if fallback.nil?
-          abort_boot "no carts found in #{CARTS_DIR}"
+          abort_boot "no carts found in #{CARTS_DIR} or #{SAMPLES_DIR}"
           return nil
         end
         # DragonRuby resolves every file against the game directory and will not
@@ -318,11 +357,13 @@ module Console
       puts 'Available carts:'
       names.each do |n|
         mark = n == DEFAULT_CART ? ' (default)' : ''
+        mark += ' (sample)' if sample?(n)
         title = cart_title cart_dir(n)
         puts "  #{n}#{mark}#{title ? "  -- #{title}" : ''}"
       end
       puts ''
-      puts "Run one with:  ./bin/run #{CARTS_DIR}/<name>"
+      puts "Run one with:  ./bin/run <name>"
+      puts "Your own carts live in #{CARTS_DIR}/; the samples in #{SAMPLES_DIR}/ ship with the console."
       quit_now
     end
 

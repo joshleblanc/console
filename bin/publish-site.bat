@@ -35,6 +35,7 @@ if errorlevel 1 (
 
 set "CREDENTIALS=dragonstation.json"
 set "CARTS_DIR=carts"
+set "SAMPLES_DIR=samples"
 set "WORK=%~dp0..\builds\tmp\publish-site"
 
 set "CART="
@@ -98,9 +99,19 @@ if "!CART!"=="" (
   exit /b 2
 )
 
-rem A bare name is shorthand for carts\<name^>, the same translation run does.
+rem A bare name is shorthand for carts\<name^>, the same translation run does --
+rem with the samples as the fallback, so the same name means the same cart here
+rem as it does when the cart is booted.
 set "CART_DIR=!CART!"
-echo !CART! | findstr /r "^[a-zA-Z0-9_-]*$" >nul && set "CART_DIR=carts\!CART!"
+echo !CART! | findstr /r "^[a-zA-Z0-9_-]*$" >nul && (
+  if exist "carts\!CART!\app\!CART!.rb" (
+    set "CART_DIR=carts\!CART!"
+  ) else if exist "samples\!CART!\app\!CART!.rb" (
+    set "CART_DIR=samples\!CART!"
+  ) else (
+    set "CART_DIR=carts\!CART!"
+  )
+)
 
 if not exist "!CART_DIR!\" (
   echo publish-site.bat: no such cart: !CART_DIR! 1>&2
@@ -245,10 +256,17 @@ goto :eof
 
 :list
 echo publish-site: carts that could be sent:
-for /d %%D in ("!CARTS_DIR!\*") do (
-  if exist "%%D\app\%%~nxD.rb" echo   %%~nxD
-)
+call :list_gallery carts
+call :list_gallery samples
 exit /b 0
+
+:list_gallery
+rem  %1 = gallery name. Paths, not names: a cart of yours can share a name
+rem  with a sample, and the path is what says which one is meant.
+for /d %%D in ("%~1\*") do (
+  if exist "%%D\app\%%~nxD.rb" echo   %~1\%%~nxD
+)
+goto :eof
 
 :usage
 echo usage: publish-site.bat ^<cart^> [--title=^<title^>] [--dry-run]

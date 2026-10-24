@@ -8,3 +8,11 @@ builds/
 # and this says so where someone adding the next one will look).
 dragonstation.json
 
+# Your carts live in carts/, and they are yours to version. This repository
+# tracks the console and its samples, not the games written on top of it, so
+# everything under carts/ is ignored -- except the .keep folder, which holds
+# the README that explains the directory and is what keeps carts/ in a fresh
+# checkout.
+carts/*
+!carts/.keep/
+

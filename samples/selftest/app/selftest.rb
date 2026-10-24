@@ -9,6 +9,19 @@
 # renderer and the real mruby build.
 TITLE = 'self test'
 
+# Where the carts this suite talks about live.
+#
+# The console reads carts from carts/ (yours, and not tracked by the console's
+# repository) and from samples/ (the ones that ship with it), so where a cart
+# sits is a property of the console rather than of the cart. Asking the loader
+# keeps these assertions about resolution instead of about a path that moving a
+# directory would break.
+LOADER = Console::CartLoader.new $args
+SELFTEST_CART = LOADER.cart_dir 'selftest'
+ARCADE_CART = LOADER.cart_dir 'arcade'
+HELLO_CART = LOADER.cart_dir 'hello'
+LDTK_CART = LOADER.cart_dir 'ldtk'
+
 class GeomSuite
   include Console::Test
 
@@ -131,6 +144,20 @@ class StrSuite
     assert_equal 'b', Console::Str.basename('/a/b')
     assert_equal '', Console::Str.basename('')
   end
+
+  test 'backslashes become forward slashes' do
+    # A Windows path is written with backslashes, and the console spells every
+    # path with forward slashes -- so a path typed on Windows has to land on
+    # the same directory as the same path typed with slashes.
+    assert_equal 'carts/space', Console::Str.backslash_to_slash('carts\space')
+    assert_equal 'carts/space/', Console::Str.backslash_to_slash('carts\\space\\')
+    assert_equal 'carts/space', Console::Str.backslash_to_slash('carts/space')
+    assert_equal 'space', Console::Str.basename('carts\space')
+    # A trailing backslash is a trailing slash once it is converted, so the
+    # two helpers compose: convert, then chomp.
+    assert_equal 'carts/space',
+                 Console::Str.chomp_slash(Console::Str.backslash_to_slash('carts\\space\\'))
+  end
 end
 
 class PaletteSuite
@@ -180,15 +207,15 @@ class AssetsSuite
   end
 
   test 'a booted cart knows its own directory' do
-    scoped 'carts/arcade' do
-      assert_equal 'carts/arcade', Console.assets_root
+    scoped ARCADE_CART do
+      assert_equal ARCADE_CART, Console.assets_root
       assert Console::Assets.scoped?
     end
   end
 
   test 'paths are cart-relative' do
-    scoped 'carts/ldtk' do
-      assert_equal 'carts/ldtk/maps/Level_0.ldtk',
+    scoped LDTK_CART do
+      assert_equal "#{LDTK_CART}/maps/Level_0.ldtk",
                    Console.asset('maps/Level_0.ldtk')
     end
   end
@@ -196,7 +223,7 @@ class AssetsSuite
   test 'resolving twice does not nest the path' do
     # Paths travel through several layers (a cart alias, then draw.sprite), so
     # resolution has to be idempotent or a path ends up doubled up.
-    scoped 'carts/ldtk' do
+    scoped LDTK_CART do
       once = Console.asset 'maps/Level_0.ldtk'
       assert_equal once, Console.asset(once)
     end
@@ -205,8 +232,8 @@ class AssetsSuite
   test 'a missing asset points at the copy the cart should own' do
     # Naming the cart's own path means the "not found" warning tells the author
     # where to put the file instead of pointing at a shared location.
-    scoped 'carts/hello' do
-      assert_equal 'carts/hello/sprites/nope.png',
+    scoped HELLO_CART do
+      assert_equal "#{HELLO_CART}/sprites/nope.png",
                    Console.asset('sprites/nope.png')
     end
   end
@@ -220,20 +247,20 @@ class AssetsSuite
   end
 
   test 'an asset only at the console root resolves, and is reported' do
-    scoped 'carts/hello' do
+    scoped HELLO_CART do
       if console_root_art? 'sprites/dragon-0.png'
         assert_equal 'sprites/dragon-0.png', Console.asset('sprites/dragon-0.png')
         assert Console::Assets.shared?('sprites/dragon-0.png')
         assert_includes Console.shared_assets, 'sprites/dragon-0.png'
       else
-        assert_equal 'carts/hello/sprites/dragon-0.png',
+        assert_equal "#{HELLO_CART}/sprites/dragon-0.png",
                      Console.asset('sprites/dragon-0.png')
       end
     end
   end
 
   test 'non-strings pass through untouched' do
-    scoped 'carts/hello' do
+    scoped HELLO_CART do
       assert_equal :star, Console.asset(:star)
       assert_equal 'http://example.com/a.png',
                    Console.asset('http://example.com/a.png')
@@ -243,24 +270,24 @@ class AssetsSuite
   # The two properties that make carts independent: a cart's file shadows the
   # console's copy of the same name, and a cart cannot see another cart.
   test 'the cart copy wins over an identically named console file' do
-    scoped 'carts/selftest' do
-      assert_equal 'carts/selftest/sprites/star.png',
+    scoped SELFTEST_CART do
+      assert_equal "#{SELFTEST_CART}/sprites/star.png",
                    Console.asset('sprites/star.png')
     end
   end
 
   test 'a cart cannot reach another cart assets' do
-    scoped 'carts/selftest' do
+    scoped SELFTEST_CART do
       Console::Sprites.index!
-      refute_equal 'carts/arcade/sprites/hero/idle/0.png',
+      refute_equal "#{ARCADE_CART}/sprites/hero/idle/0.png",
                    Console::Sprites.path('hero/idle/0')
     end
   end
 
   test 'a cart still gets console starter art it does not own' do
-    scoped 'carts/arcade' do
+    scoped ARCADE_CART do
       Console::Sprites.index!
-      assert_equal 'carts/arcade/sprites/hero/idle/0.png',
+      assert_equal "#{ARCADE_CART}/sprites/hero/idle/0.png",
                    Console::Sprites.path('hero/idle/0')
       # The second half needs a console root to fall back to; in a staged
       # build the cart simply does not know the name, which is also correct.
@@ -275,8 +302,11 @@ class AssetsSuite
     found = loader.available
     SHIPPED.each do |name|
       assert_includes found, name
-      assert DR.stat_file(loader.cart_entry("carts/#{name}")),
-             "cart #{name} has no entry file at #{loader.cart_entry("carts/#{name}")}"
+      # The cart may sit in carts/ or in samples/, so the path comes from the
+      # loader rather than from a directory spelled out here.
+      entry = loader.cart_entry loader.cart_dir(name)
+      assert DR.stat_file(entry),
+             "cart #{name} has no entry file at #{entry}"
     end
     # A cart is a directory, never a loose .rb file.
     refute_includes found, 'selftest.rb'
@@ -285,10 +315,20 @@ class AssetsSuite
   # A cart is named by a path, and a bare name is shorthand for the gallery.
   # Both routes have to reach the same directory, or ./bin/run carts/x and ./bin/run x
   # would quietly boot different things.
-  test 'a bare name resolves into the default gallery' do
+  test 'a bare name resolves into the gallery' do
     loader = Console::CartLoader.new $args
-    assert_equal 'carts/arcade', loader.cart_dir('arcade')
-    assert_equal 'carts/selftest', loader.cart_dir('selftest')
+    # The gallery is carts/ first and samples/ second, so a bare name lands on
+    # whichever cart is there -- and on a cart that is really there.
+    dir = loader.cart_dir 'arcade'
+    assert loader.cart?(dir), "#{dir} is not a cart"
+    assert_equal 'arcade', loader.cart_name(dir)
+    assert_equal dir, loader.cart_dir("#{dir}/")
+  end
+
+  test 'the gallery is your own carts first, then the samples' do
+    # The order is the rule: a cart of yours shadows a sample of the same name,
+    # which is how you take a sample over without renaming it.
+    assert_equal ['carts', 'samples'], Console::CartLoader::GALLERY_DIRS
   end
 
   test 'a path is taken as given, whatever it points at' do
@@ -297,9 +337,16 @@ class AssetsSuite
     assert_equal 'demos/deep/one', loader.cart_dir('demos/deep/one')
   end
 
+  test 'a windows path is a path too' do
+    loader = Console::CartLoader.new $args
+    # run.bat carts\hello has to find the same cart that run carts/hello does.
+    assert_equal ARCADE_CART, loader.cart_dir('samples\\arcade')
+    assert_equal 'games/space', loader.cart_dir('games\\space')
+  end
+
   test 'a trailing slash does not change which cart is meant' do
     loader = Console::CartLoader.new $args
-    assert_equal 'carts/arcade', loader.cart_dir('carts/arcade/')
+    assert_equal ARCADE_CART, loader.cart_dir("#{ARCADE_CART}/")
     assert_equal 'games/space', loader.cart_dir('games/space/')
   end
 
@@ -314,7 +361,7 @@ class AssetsSuite
   test 'the entry file is app/main.rb, falling back to the cart name' do
     loader = Console::CartLoader.new $args
     # The shipped carts use app/<name>.rb, which still resolves.
-    assert_equal 'carts/arcade/app/arcade.rb', loader.cart_entry('carts/arcade')
+    assert_equal "#{ARCADE_CART}/app/arcade.rb", loader.cart_entry(ARCADE_CART)
     # A directory with no main.rb and no name match is not a cart at all.
     assert_equal false, loader.cart?('carts/nope')
     assert_equal false, loader.cart?('carts')
@@ -323,25 +370,25 @@ end
 
 # Every path below is cart-relative in the source and cart-scoped in the
 # result: the selftest cart owns these files, and the console rewrites them to
-# real paths under carts/selftest. The console root holds a copy of star.png
-# too, which is what makes these tests prove isolation rather than just
-# resolution.
+# real paths under the selftest cart's own directory. The console root holds a
+# copy of star.png too, which is what makes these tests prove isolation rather
+# than just resolution.
 class SpritesSuite
   include Console::Test
 
   test 'the cart copy of an asset wins over the console root' do
     Console::Sprites.index!
-    assert_equal 'carts/selftest/sprites/star.png', Console::Sprites.path(:star)
+    assert_equal "#{SELFTEST_CART}/sprites/star.png", Console::Sprites.path(:star)
   end
 
   test 'nested assets resolve by relative key' do
     Console::Sprites.index!
-    assert_equal 'carts/selftest/sprites/misc/star.png',
+    assert_equal "#{SELFTEST_CART}/sprites/misc/star.png",
                  Console::Sprites.path('misc/star')
   end
 
   test 'a cart-relative path resolves inside the cart' do
-    assert_equal 'carts/selftest/sprites/blue.png',
+    assert_equal "#{SELFTEST_CART}/sprites/blue.png",
                  Console::Sprites.path('sprites/blue.png')
   end
 
@@ -505,7 +552,7 @@ class DrawSuite
     # the cart's file and not a console-root one.
     Console.draw.sprite path: 'sprites/star.png', x: 0, y: 0
     prim = outputs.sprites.last
-    assert_equal 'carts/selftest/sprites/star.png', prim[:path]
+    assert_equal "#{SELFTEST_CART}/sprites/star.png", prim[:path]
     assert_equal 16, prim[:w]
     assert_equal 16, prim[:h]
   end
@@ -968,7 +1015,7 @@ class AnimationSuite
     Console.anim.play e, :walk, kind: :sheet, sheet: 'sprites/star.png',
                        frame_count: 4, frame_w: 16, frame_h: 16, fps: 60
     props = Console.anim.primitive_props e
-    assert_equal 'carts/selftest/sprites/star.png', props[:path]
+    assert_equal "#{SELFTEST_CART}/sprites/star.png", props[:path]
     assert_equal 0, props[:source_x]
     assert_equal 16, props[:source_w]
   end
@@ -1200,7 +1247,7 @@ class RuntimeSuite
 
   test 'version is exposed once and matches the version file' do
     assert_equal Console::Version::STRING, Console::VERSION
-    assert_equal '0.1.0', Console::Version::STRING
+    assert_equal '0.2.0', Console::Version::STRING
   end
 
   test 'screen tracks the live grid' do
@@ -1285,11 +1332,12 @@ class RuntimeSuite
   end
 
   # publish-cart pins 'carts/space', not 'space', so a staged build stays
-  # pinned to its directory even after the cart is copied into place.
+  # pinned to its directory even after the cart is copied into place. A path
+  # is taken as given, so the pin resolves wherever the cart was staged.
   test 'a pin may be a path and resolves like any other target' do
-    loader = Console::CartLoader.new($args).pin 'carts/arcade'
-    assert_equal 'carts/arcade', loader.pinned_name
-    assert_equal 'carts/arcade', loader.requested_dir
+    loader = Console::CartLoader.new($args).pin ARCADE_CART
+    assert_equal ARCADE_CART, loader.pinned_name
+    assert_equal ARCADE_CART, loader.requested_dir
     assert_equal 'arcade', loader.cart_name(loader.requested_dir)
     assert loader.cart?(loader.requested_dir)
   end

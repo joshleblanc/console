@@ -73,11 +73,16 @@ The console runs on **mruby 3.0**, which is not CRuby:
 | File | What it holds |
 |---|---|
 | `app/console/core.rb` | the whole `Console::API` — the authoritative list of bare calls |
-| `carts/hello/app/hello.rb` | the smallest cart that uses most of the surface; read it top to bottom |
-| `carts/arcade/app/arcade.rb` | a real game: scenes, waves, camera, tweens, pause |
-| `carts/widgets/app/widgets.rb` | every widget, as a live reference |
-| `carts/ldtk/app/ldtk.rb` | level loading + a kinematic body |
-| `carts/selftest/app/selftest.rb` | the suite — the best usage documentation in the repo |
+| `samples/hello/app/hello.rb` | the smallest cart that uses most of the surface; read it top to bottom |
+| `samples/arcade/app/arcade.rb` | a real game: scenes, waves, camera, tweens, pause |
+| `samples/widgets/app/widgets.rb` | every widget, as a live reference |
+| `samples/ldtk/app/ldtk.rb` | level loading + a kinematic body |
+| `samples/selftest/app/selftest.rb` | the suite — the best usage documentation in the repo |
+
+Those five are the samples the console ships with; they live in `samples/` so
+they cannot be confused with your work. Your own labs go in `carts/`, which this
+repository ignores (except for a `.keep/` folder) — so version them separately:
+a repository of your own for your carts, or `git init` inside `carts/`.
 
 ---
 
@@ -239,7 +244,7 @@ Watch the entity counts for a minute: they must return to a steady state, never
 climb forever.
 
 **Stretch:** give rocks a `kind` that matches a real sprite folder and watch
-animation pick it up for free (see `carts/arcade/sprites/hero/idle/`).
+animation pick it up for free (see `samples/arcade/sprites/hero/idle/`).
 
 ---
 
@@ -361,7 +366,7 @@ property in `scene_data` and honouring it in `render`.
 widget backing store.
 
 Create `carts/lab08` — a real options screen, and treat
-`carts/widgets/app/widgets.rb` as a reference, not a thing to copy.
+`samples/widgets/app/widgets.rb` as a reference, not a thing to copy.
 
 **Spec**
 
@@ -406,7 +411,7 @@ stages its own directory alone:
 
 ```sh
 mkdir -p carts/lab09/maps
-cp carts/ldtk/maps/Level_0.ldtk carts/lab09/maps/
+cp samples/ldtk/maps/Level_0.ldtk carts/lab09/maps/
 ```
 
 **Spec**
@@ -457,8 +462,8 @@ Create `carts/lab10`.
    no registration at all — borrow some from a cart that owns them:
    ```sh
    mkdir -p carts/lab10/sprites/misc
-   cp carts/selftest/sprites/star.png carts/lab10/sprites/star.png
-   cp carts/selftest/sprites/blue.png carts/lab10/sprites/misc/star.png
+   cp samples/selftest/sprites/star.png carts/lab10/sprites/star.png
+   cp samples/selftest/sprites/blue.png carts/lab10/sprites/misc/star.png
    ```
    Now `sprite(:star)` resolves with nothing declared, and the nested
    `sprites/misc/star.png` is reachable as `:star` *and* as `:'misc/star'`.
@@ -504,7 +509,7 @@ real renderer and the real mruby build. Add your file next to the existing
 suites:
 
 ```
-carts/selftest/app/lab_suite.rb
+samples/selftest/app/lab_suite.rb
 ```
 
 **Spec**
@@ -537,12 +542,12 @@ carts/selftest/app/lab_suite.rb
 
 `./bin/run-test` exits non-zero on failure, so it drops straight into CI.
 
-> Watch out: a file in `carts/selftest/app/` is required during boot. If it
+> Watch out: a file in `samples/selftest/app/` is required during boot. If it
 > raises at load time it takes the whole console down, not just your suite.
 
 **Stretch:** one test that mutates global asset scope (`Console::Assets.boot`),
 restores it in an `ensure`, and rebuilds the sprite index — the pattern the
-`AssetsSuite` uses in `carts/selftest/app/selftest.rb`.
+`AssetsSuite` uses in `samples/selftest/app/selftest.rb`.
 
 ---
 
@@ -564,7 +569,7 @@ Build `carts/arcade2`: a small but complete game, using every subsystem.
 - **Audio:** `music` on `on_enter(:play)`, `stop_music` on `on_leave(:play)`,
   and sfx that degrade silently when unregistered.
 - **Assets:** every texture generated or owned. `shared_assets` is empty.
-- **Tests:** a suite in `carts/selftest/app/` covering your scene transitions
+- **Tests:** a suite in `samples/selftest/app/` covering your scene transitions
   and your wave scheduler.
 
 **Done when**

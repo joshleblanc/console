@@ -23,7 +23,10 @@
 #   6. HUD / warnings
 #
 module Console
-  VERSION = '0.1.0'
+  # The version string lives in exactly one place: app/console/version.rb,
+  # which is required before this file. Two copies of it is how a release ends
+  # up reporting one version and shipping another.
+  VERSION = Version::STRING
 
   class << self
     attr_reader :args, :draw, :input, :ui, :entities, :anim, :audio

@@ -16,21 +16,27 @@ DIR=$(pwd)
 DRAGONRUBY=$(dirname "$DIR")/dragonruby
 TICKS=${1:-300}
 
-# Cart names come from directories that actually hold an entry file, so a
-# half-created cart is not reported as a cart. Same rule as
+# Cart directories in both galleries: your own in carts/ and the samples that
+# ship in samples/. Directories come from the filesystem, so a half-created
+# cart is not reported as a cart. Same rule as
 # Console::CartLoader#available, and the same rule smoke.bat uses.
+#
+# Paths, not names: a cart of yours can share a name with a sample, and both
+# have to be booted.
 CARTS=""
-for dir in carts/*/; do
-  [ -d "$dir" ] || continue
-  name=${dir%/}
-  name=${name##*/}
-  if [ -f "$dir/app/main.rb" ] || [ -f "$dir/app/$name.rb" ]; then
-    CARTS="$CARTS $name"
-  fi
+for gallery in carts samples; do
+  for dir in "$gallery"/*/; do
+    [ -d "$dir" ] || continue
+    name=${dir%/}
+    name=${name##*/}
+    if [ -f "$dir/app/main.rb" ] || [ -f "$dir/app/$name.rb" ]; then
+      CARTS="$CARTS ${dir%/}"
+    fi
+  done
 done
 CARTS=$(printf '%s\n' $CARTS | grep . | sort -u)
 if [ -z "$CARTS" ]; then
-  echo "smoke: no carts found in carts/"
+  echo "smoke: no carts found in carts/ or samples/"
   exit 1
 fi
 

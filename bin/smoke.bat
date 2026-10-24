@@ -34,18 +34,19 @@ if not "%~1"=="" set "TICKS=%~1"
 set "LOG=%TEMP%\smoke.log"
 if not exist "%TEMP%" set "LOG=%CD%\smoke.log"
 
-rem  Cart names in the gallery. A directory without an entry file is not a
-rem  cart, the same rule Console::CartLoader#available applies.
+rem  Cart directories in both galleries: your own in carts\ and the samples
+rem  that ship in samples\. A directory without an entry file is not a cart,
+rem  the same rule Console::CartLoader#available applies.
+rem
+rem  Paths, not names: a cart of yours can share a name with a sample, and
+rem  both have to be booted. The path is spelled with forward slashes, which
+rem  is what the console reads.
 set "CARTS="
-for /f "delims=" %%D in ('dir /b /ad "carts\*" 2^>nul') do (
-  call :has_entry "%%D"
-  if defined HASE (
-    if defined CARTS (set "CARTS=!CARTS! %%D") else (set "CARTS=%%D")
-  )
-)
+call :collect carts
+call :collect samples
 
 if not defined CARTS (
-  echo smoke: no carts found in carts\ 1>&2
+  echo smoke: no carts found in carts\ or samples\ 1>&2
   endlocal & exit /b 1
 )
 
@@ -68,14 +69,28 @@ rem ============================================================================
 
 :has_entry
 set "HASE="
-if exist "carts\%~1\app\main.rb" set "HASE=1"
+if exist "%~1\app\main.rb" set "HASE=1"
 if defined HASE goto :eof
-if exist "carts\%~1\app\%~1.rb" set "HASE=1"
+if exist "%~1\app\%~2.rb" set "HASE=1"
+goto :eof
+
+rem  Collect the carts in one gallery. %%D is the directory name, so the entry
+rem  file can be named after it.
+:collect
+set "GALLERY=%~1"
+for /f "delims=" %%D in ('dir /b /ad "%GALLERY%\*" 2^>nul') do (
+  call :has_entry "%GALLERY%\%%D" "%%D"
+  if defined HASE (
+    set "CARTPATH=%GALLERY%/%%D"
+    if defined CARTS (set "CARTS=!CARTS! !CARTPATH!") else (set "CARTS=!CARTPATH!")
+  )
+)
 goto :eof
 
 :boot
 rem  Each cart's whole output goes to the log, so a failure can show the
 rem  complete trace rather than a couple of grepped lines.
+rem  %~1 is a cart path (carts\mine or samples\arcade).
 "%DRAGONRUBY%" "%GAMEDIR%" --cart "%~1" --ticks "%TICKS%" >"%LOG%" 2>&1
 
 findstr /i /l /c:"EXCEPTION" "%LOG%" >nul 2>&1

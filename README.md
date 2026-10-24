@@ -45,8 +45,8 @@ The console is an ordinary DragonRuby game directory.
 cd console
 
 ./bin/run                  # boot the default cart
-./bin/run carts/hello      # boot a cart by path
-./bin/run hello            # ...or by name (shorthand for carts/hello)
+./bin/run samples/hello    # boot a cart by path
+./bin/run hello            # ...or by name (shorthand for the gallery)
 ./bin/run --cart hello     # the explicit switch form
 ./bin/run --list           # what carts exist in the gallery
 ./bin/run --hud            # start with the debug overlay on
@@ -55,13 +55,26 @@ cd console
 ./bin/smoke                # boot every cart headlessly and report failures
 ```
 
-A cart is a **path to a cart directory**, and `carts/` is just the default
-gallery. Any directory inside the console works — `games/space`,
-`demos/space`, `carts/space` — and a bare name is shorthand for `carts/<name>`:
+A cart is a **path to a cart directory**, and the gallery is read from two
+places: `carts/`, which is yours, and `samples/`, which ships with the console.
+Any directory inside the console works — `games/space`, `demos/space`,
+`carts/space` — and a bare name is shorthand for the gallery:
 
 ```sh
 ./bin/run games/space          # a cart that does not live in carts/
 ```
+
+`carts/` is looked at first, so a cart of yours shadows a sample of the same
+name. Copy a sample to start from it rather than editing it where it lives:
+
+```sh
+cp -R samples/hello carts/hello
+```
+
+> **`carts/` is yours.** This repository ignores everything under it except a
+> `.keep/` folder, so the carts you write are never part of the console's
+> history — source-control them separately, in a repository of your own. See
+> `carts/.keep/README.md`.
 
 The cart's name is the last segment of that path, and it is also the module the
 cart has to define, so `games/space/app/main.rb` defines `Space`.
@@ -77,7 +90,7 @@ see [Publishing a single cart](#publishing-a-single-cart). To debug one scene of
 game without playing through the front door:
 
 ```sh
-./bin/run carts/arcade --scene play
+./bin/run samples/arcade --scene play
 ```
 
 ### Switches
@@ -92,8 +105,8 @@ game without playing through the front door:
 | `--ticks <n>` | quit after n frames (headless smoke runs) |
 | `--shot <path>` | write a PNG of the last frames, then quit |
 
-`--list` covers the `carts/` gallery only; a cart kept elsewhere is still
-reachable by path, it just is not what the listing shows.
+`--list` covers the gallery — `carts/` and `samples/`; a cart kept elsewhere is
+still reachable by path, it just is not what the listing shows.
 
 On a headless machine, wrap the console in `xvfb-run -a`.
 
@@ -119,12 +132,12 @@ unzip library.zip -d console
 ```
 
 The download is the whole console -- this `app/`, this `bin/`, the starter art,
-the metadata, and a `carts/` directory to put a cart in -- not just the library,
-so it unpacks into a console that boots. It compares versions and does nothing
-unless the site is serving something newer than the `MAJOR/MINOR/PATCH` in
-`app/console/version.rb`. Everything is unpacked to a scratch directory and
-verified before it is moved into place, so a truncated download cannot leave this
-console with half a library.
+the metadata, the sample carts, and a `carts/` directory to put a cart in -- not
+just the library, so it unpacks into a console that boots. It compares versions
+and does nothing unless the site is serving something newer than the
+`MAJOR/MINOR/PATCH` in `app/console/version.rb`. Everything is unpacked to a
+scratch directory and verified before it is moved into place, so a truncated
+download cannot leave this console with half a library.
 
 The ZIP carries Unix modes, so `unzip` gives you runnable scripts. A tool that
 ignores them (`python3 -m zipfile`) will not, and `chmod +x bin/*` once fixes
@@ -141,7 +154,7 @@ That file is this console's credential, and `./bin/publish-site` spends it:
 
 ```sh
 ./bin/publish-site --list            # what could be sent
-./bin/publish-site arcade            # send carts/arcade
+./bin/publish-site arcade            # send samples/arcade
 ./bin/publish-site arcade --dry-run  # build it and check the key, send nothing
 ```
 
@@ -183,10 +196,11 @@ and downloads start working — after which `dragonstation.json` arrives in your
 next bundle and `./bin/publish-console` behaves normally.
 
 **A version is a console, not a checkout.** The archive carries the library,
-the entry point, every script, the starter art and a `carts/` directory with a
-README in it -- and none of this machine: no `.git`, no `builds/`, no `shots/`,
-no `errors/last.txt`, no carts, and not the publishing key sitting in this
-directory. The script refuses to send an archive that contains the key.
+the entry point, every script, the starter art, the sample carts and a `carts/`
+directory with a README in it -- and none of this machine: no `.git`, no
+`builds/`, no `shots/`, no `errors/last.txt`, no carts of your own, and not the
+publishing key sitting in this directory. The script refuses to send an archive
+that contains the key.
 
 The file itself is only in an administrator's download from the site. The
 server checks the key on every request anyway, so this is a convenience rather
@@ -218,9 +232,9 @@ Every shell script has a batch equivalent beside it, doing the same thing:
 
 ```bat
 run.bat                             boot the default cart
-run.bat carts\hello                 boot a cart by path
+run.bat samples\hello               boot a cart by path
 run.bat hello                       ...or by name
-run.bat --cart carts\arcade         the explicit switch form
+run.bat --cart samples\arcade       the explicit switch form
 run.bat --list                      list the gallery
 
 run-test.bat                        the self test, non-zero on failure
@@ -261,8 +275,8 @@ only these four scripts differ. Two differences worth knowing:
 ## Publishing a single cart
 
 `dragonruby-publish` packages a whole game directory, and this directory holds
-*every* cart under `carts/`. Pointed at the console, it would ship the
-selftest, the widgets gallery and the arcade cart all inside one build.
+*every* cart under `carts/` and `samples/`. Pointed at the console, it would ship
+the selftest, the widgets gallery and the arcade cart all inside one build.
 
 So publish through `./bin/publish-cart`, which stages a throwaway directory first:
 
@@ -286,7 +300,7 @@ every cart shares it while you develop. Running `--cart arcade` in a checkout
 therefore still identifies as `Console` — that is DragonRuby, not the console.
 
 Publishing resolves it per cart. A cart that ships its own
-`carts/<name>/metadata/game_metadata.txt` uses that verbatim — its own identity,
+`metadata/game_metadata.txt` uses that verbatim — its own identity,
 its own icon, and its own engine settings. Otherwise the console's file is
 inherited and only `gameid` and `gametitle` are rewritten, from the cart name and
 the cart's `TITLE`, so the published title and `--list` can never disagree.
@@ -380,13 +394,16 @@ console/
 │   │   ├── body.rb          kinematic platformer body
 │   │   ├── testing.rb       the self-test harness
 │   │   └── version.rb       the console's version string
-├── carts/                   the default gallery: one directory per cart
+├── carts/                   your gallery: one directory per cart of yours
+│   └── .keep/                the only part of it this repository tracks
+│       └── README.md         what a cart is, and that the directory is yours
+├── samples/                 the sample carts that ship with the console
 │   └── space/
-│       ├── app/main.rb      the cart, plus any code files beside it
-│       ├── sprites/         its own art
-│       ├── sounds/          its own sounds and music
-│       ├── maps/            its own LDTK levels
-│       └── data/            anything else it reads
+│       ├── app/main.rb       the cart, plus any code files beside it
+│       ├── sprites/          its own art
+│       ├── sounds/           its own sounds and music
+│       ├── maps/             its own LDTK levels
+│       └── data/             anything else it reads
 ├── sprites/                 console starter art: the fallback when a cart has
 │                            no file of its own
 ├── bin/                     every script, and their .bat equivalents
@@ -848,7 +865,9 @@ sine(1.0, 0, 20)      # centred oscillation
 
 ---
 
-## Carts included
+## Samples included
+
+These live in `samples/`, and are the carts the console ships with.
 
 | Cart | What it shows |
 |---|---|
@@ -858,9 +877,12 @@ sine(1.0, 0, 20)      # centred oscillation
 | `ldtk` | LDTK end to end: loads a real `.ldtk` from its own `maps/`, spawns its entities, runs a body on its solids |
 | `selftest` | the console's own test suite, with its fixtures |
 
-Each one owns the files it uses — `carts/arcade/sprites/`, `carts/ldtk/maps/`,
-`carts/selftest/fixtures/` — which is what makes them independent. Screenshots
+Each one owns the files it uses — `samples/arcade/sprites/`, `samples/ldtk/maps/`,
+`samples/selftest/fixtures/` — which is what makes them independent. Screenshots
 of each live in `shots/` (regenerate with `--shot`).
+
+They are samples, not your work: copy one into `carts/` to start from it
+rather than editing it where it lives.
 
 ---
 
@@ -870,7 +892,7 @@ of each live in `shots/` (regenerate with `--shot`).
 ./bin/run-test
 ```
 
-175 tests / 1435 assertions, executed **inside the real DragonRuby runtime** —
+192 tests / 1539 assertions, executed **inside the real DragonRuby runtime** —
 against the real renderer, the real output collections and the real mruby build,
 not a stand-in. The suite covers geometry, strings, palettes, asset scoping and
 cart isolation, the sprite index and procedural generation, drawing and
@@ -881,7 +903,7 @@ and the runtime wiring.
 It prints a machine-readable summary:
 
 ```
-CONSOLE_TEST_STATUS=PASS TESTS=175 ASSERTIONS=1435 FAILURES=0
+CONSOLE_TEST_STATUS=PASS TESTS=192 ASSERTIONS=1539 FAILURES=0
 ```
 
 `./bin/smoke` additionally boots every cart headlessly and fails if any raises.

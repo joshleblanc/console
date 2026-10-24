@@ -37,6 +37,7 @@ if not exist "%DRAGONRUBY_PUBLISH%" set "DRAGONRUBY_PUBLISH=%ROOT%\dragonruby-pu
 set "DRAGONRUBY=%ROOT%\dragonruby.exe"
 if not exist "%DRAGONRUBY%" set "DRAGONRUBY=%ROOT%\dragonruby"
 set "CARTS_DIR=carts"
+set "SAMPLES_DIR=samples"
 set "STAGE_ROOT=%ROOT%\builds\cart-staging"
 
 rem ============================================================================
@@ -69,23 +70,40 @@ goto :eof
 
 :cart_dir
 rem  A name or a path, resolved the way the loader resolves it: a bare name is
-rem  the gallery shorthand for carts\<name\>. Tested by substitution rather
-rem  than a piped findstr, so no subshell and no quoting surprises.
+rem  looked up in carts\ first and in samples\ second, so the same name means
+rem  the same cart here as it does when the cart is booted. Tested by
+rem  substitution rather than a piped findstr, so no subshell and no quoting
+rem  surprises.
 set "CD_OUT=%~1"
 set "CD_TEST=!CD_OUT:/=\!"
-if "!CD_TEST!"=="%~1" set "CD_OUT=%DIR%\%CARTS_DIR%\%~1"
+if "!CD_TEST!"=="%~1" (
+  set "CD_OUT=%DIR%\%CARTS_DIR%\%~1"
+  call :cart_entry "!CD_OUT!"
+  if defined ENTRY goto :eof
+  set "CD_OUT=%DIR%\%SAMPLES_DIR%\%~1"
+)
 goto :eof
 
 :carts
-rem  Cart names in the default gallery. Derived from the filesystem every run so
-rem  a newly added cart is publishable without touching this script. A directory
+rem  Cart directories in both galleries: your own in carts\ and the samples the
+rem  console ships in samples\. Derived from the filesystem every run so a
+rem  newly added cart is publishable without touching this script. A directory
 rem  without an entry file is not a cart.
+rem
+rem  Paths, not names: a cart of yours can share a name with a sample, and the
+rem  path is what says which one is meant.
 set "CARTS_OUT="
-if not exist "%DIR%\%CARTS_DIR%" goto :eof
-for /f "delims=" %%D in ('dir /b /ad "%DIR%\%CARTS_DIR%\*" 2^>nul') do (
-  call :cart_entry "%DIR%\%CARTS_DIR%\%%D"
+call :collect %CARTS_DIR%
+call :collect %SAMPLES_DIR%
+goto :eof
+
+:collect
+rem  %1 = gallery name. Appends that gallery's carts to CARTS_OUT.
+if not exist "%DIR%\%~1" goto :eof
+for /f "delims=" %%D in ('dir /b /ad "%DIR%\%~1\*" 2^>nul') do (
+  call :cart_entry "%DIR%\%~1\%%D"
   if defined ENTRY (
-    if defined CARTS_OUT (set "CARTS_OUT=!CARTS_OUT! %%D") else (set "CARTS_OUT=%%D")
+    if defined CARTS_OUT (set "CARTS_OUT=!CARTS_OUT! %~1\%%D") else (set "CARTS_OUT=%~1\%%D")
   )
 )
 goto :eof
@@ -115,7 +133,7 @@ goto :eof
 echo Publishable carts:
 call :carts
 for %%C in (!CARTS_OUT!) do (
-  call :cart_title "%DIR%\%CARTS_DIR%\%%C"
+  call :cart_title "%DIR%\%%C"
   set "LINE=  %%C"
   if defined TITLE_OUT set "LINE=  %%C  -- !TITLE_OUT!"
   echo !LINE!
@@ -479,10 +497,15 @@ rem
 rem  Only the cart's own files are scanned, not the console library: the library
 rem  documents paths like 'carts/<name>/' in its own comments, and matching the
 rem  bare string there would flag the library rather than a reference.
+rem
+rem The cart being published is staged as carts\<name\>, so that one directory
+rem is the cart's own and is not flagged; every other gallery path is.
 call :carts
 for %%O in (!CARTS_OUT!) do (
-  if /i not "%%O"=="!CART!" (
-    findstr /s /l /c:"carts/%%O/" "%STAGE%\carts\*.rb" >nul 2>&1
+  set "OPATH=%%O"
+  set "OPATH=!OPATH:\=/!"
+  if /i not "!OPATH!"=="carts/!CART!" (
+    findstr /s /l /c:"!OPATH!/" "%STAGE%\carts\*.rb" >nul 2>&1
     if not errorlevel 1 (
       echo publish-cart.bat: ABORT staged build references cart '%%O' 1>&2
       goto :eof 1

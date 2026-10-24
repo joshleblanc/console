@@ -95,12 +95,28 @@ module Console
       s
     end
 
+    # Backslashes to forward slashes: backslash_to_slash('carts\space') ->
+    # 'carts/space'.
+    #
+    # A Windows path is written with backslashes and the console spells every
+    # path with forward slashes, so this is what lets run.bat carts\space find
+    # the same cart that run carts/space does.
+    def backslash_to_slash(str)
+      s = str.to_s
+      return s unless s.include? '\\'
+      out = ''
+      s.each_char do |ch|
+        out += ch == '\\' ? '/' : ch
+      end
+      out
+    end
+
     # The last segment of a path: basename('carts/space') -> 'space'
     #
     # A cart's directory doubles as its name, so this is what turns a path back
     # into the module a cart is expected to define.
     def basename(str)
-      chomp_slash(str).split('/').last.to_s
+      backslash_to_slash(chomp_slash(str)).split('/').last.to_s
     end
 
     # Uppercase the first character: capitalize('hello') -> 'Hello'
