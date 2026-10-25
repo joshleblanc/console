@@ -14,7 +14,7 @@ dragonstation.json
 # the README that explains the directory and is what keeps carts/ in a fresh
 # checkout.
 carts/*
-!carts/.keep/
+!carts/.keep
 *.zip
 shots/
 errors/
