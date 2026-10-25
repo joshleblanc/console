@@ -52,7 +52,7 @@ Run from the repo root. On Windows use the `.bat` form (`bin\run.bat`).
 ```sh
 ./bin/run [cart] [--scene s] [--hud]   # boot a cart (bare name = carts/<name>)
 ./bin/run --list                       # list carts
-./bin/new-cart <name>                  # scaffold carts/<name>/ from a template
+./bin/new-cart <name> [--no-git]       # scaffold carts/<name>/ from a template
 ./bin/run-test                         # self test; passes iff it prints CONSOLE_TEST_STATUS=PASS
 ./bin/smoke [ticks]                    # boot every cart headlessly, fail if any raises
 ./bin/run hello --ticks 60 --shot shots/hello.png   # headless screenshot

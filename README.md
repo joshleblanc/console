@@ -71,6 +71,10 @@ name. Scaffold a new cart from the template:
 ./bin/new-cart mygame
 ```
 
+It also runs `git init` inside the cart with an initial commit — `carts/` is
+yours to version separately, so each cart starts life as its own repository.
+Pass `--no-git` to skip that.
+
 ...or copy a sample to start from it rather than editing it where it lives:
 
 ```sh
@@ -168,6 +172,8 @@ The cart arrives on the site as a **draft** under your account. Nothing goes
 public because a script ran — you play it there, then publish it from its page.
 Everything the site's upload form refuses, this refuses too, and says why:
 traversal, symlinks, expansion bombs, and art a cart names but does not own.
+A cart's `.git` is never part of the upload — a cart may be its own repository,
+and its history stays home.
 
 ### Releasing a new console version
 
@@ -299,7 +305,8 @@ So publish through `./bin/publish-cart`, which stages a throwaway directory firs
 It stages `builds/cart-staging/<cart>/` containing the console library, the
 cart directory (code *and* the sprites, sounds, maps and data it owns),
 metadata derived from the cart's `TITLE`, and an entry point that **pins** the
-cart — then packages that directory. Artifacts land in `../builds/`.
+cart — then packages that directory. A cart's `.git` never reaches the staging
+directory. Artifacts land in `../builds/`.
 
 ### Metadata
 

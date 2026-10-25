@@ -214,14 +214,16 @@ echo "publish-site: packing $CART_DIR"
 #
 # Junk is excluded by name rather than by a dot rule: a cart is allowed to have
 # files beginning with a dot, and what is not allowed is the two things a desktop
-# adds without being asked.
+# adds without being asked, plus the cart's own .git -- a cart may be its own
+# repository, but its history is not part of the game.
 case "$ZIP_TOOL" in
   zip)
-    # -X drops the extra fields a macOS zip writes, -r recurses, and the two
+    # -X drops the extra fields a macOS zip writes, -r recurses, and these
     # exclusions are the only filtering.
     (cd "$(dirname "$CART_DIR")" &&
       zip -q -r -X "$ARCHIVE" "$CART_NAME" \
-        -x "*/.DS_Store" -x "__MACOSX/*" -x "*/.DS_Store") ||
+        -x "*/.DS_Store" -x "__MACOSX/*" -x "*/.DS_Store" \
+        -x "$CART_NAME/.git/*" -x "$CART_NAME/.git") ||
       die "zip failed for $CART_DIR"
     ;;
   python3)
@@ -232,11 +234,13 @@ root, archive = sys.argv[1], sys.argv[2]
 JUNK = {".DS_Store", "__MACOSX"}
 
 with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
-    for directory, _, files in os.walk(root):
+    for directory, dirs, files in os.walk(root):
+        # A cart may be its own repository; its history is not part of the game.
+        dirs[:] = [d for d in dirs if d != ".git"]
         if os.path.basename(directory) in JUNK:
             continue
         for name in files:
-            if name == ".DS_Store":
+            if name == ".DS_Store" or (directory == root and name == ".git"):
                 continue
             path = os.path.join(directory, name)
             z.write(path, os.path.relpath(path, os.path.dirname(root)))

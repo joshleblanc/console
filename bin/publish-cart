@@ -172,6 +172,8 @@ cp -R app/console "$STAGE/app/console"
 #    drift into "copy whatever is in carts/".
 mkdir -p "$STAGE/carts"
 cp -R "$CART_SRC" "$STAGE/carts/$CART"
+# A cart may be its own repository; its history is not part of the game.
+rm -rf "$STAGE/carts/$CART/.git"
 
 # 3. Fonts. DragonRuby reads these from the game root, so they cannot live
 #    inside a cart; the console ships its own copy for a standalone build.

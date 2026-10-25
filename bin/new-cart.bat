@@ -3,13 +3,15 @@ rem ============================================================================
 rem  new-cart.bat -- scaffold a new cart (Windows).
 rem
 rem    new-cart.bat <name>
+rem    new-cart.bat --no-git <name>   skip the git repo
 rem
 rem  Creates carts\<name>\ with an app\main.rb skeleton and the empty asset
-rem  directories the console looks for: sprites, sounds, maps and data. The
-rem  name becomes the cart directory and -- run through the same camel-case
-rem  rule Console::Str.camel applies -- the class the entry file defines, so
-rem  it must be a bare directory name: letters, digits, '-' and '_', starting
-rem  with a letter.
+rem  directories the console looks for: sprites, sounds, maps and data, then
+rem  makes the cart its own git repo with an initial commit -- carts\ is yours
+rem  to version separately. The name becomes the cart directory and -- run
+rem  through the same camel-case rule Console::Str.camel applies -- the class
+rem  the entry file defines, so it must be a bare directory name: letters,
+rem  digits, '-' and '_', starting with a letter.
 rem
 rem  This mirrors ./new-cart exactly. Keep the two in step.
 rem ============================================================================
@@ -21,16 +23,33 @@ if errorlevel 1 (
   exit /b 1
 )
 
+set "NO_GIT=0"
+set "GIT_DONE=0"
+set "NAME="
+:args
+if "%~1"=="" goto args_done
 if /i "%~1"=="-h" goto usage_ok
 if /i "%~1"=="--help" goto usage_ok
-if "%~1"=="" goto usage_err
-if not "%~2"=="" (
-  echo new-cart.bat: expected exactly one name 1>&2
-  echo usage: new-cart.bat ^<name^> 1>&2
+if /i "%~1"=="--no-git" (
+  set "NO_GIT=1"
+  shift
+  goto args
+)
+set "A=%~1"
+if "!A:~0,1!"=="-" (
+  echo new-cart.bat: unknown option: !A! 1>&2
   exit /b 1
 )
-
+if defined NAME (
+  echo new-cart.bat: expected exactly one name 1>&2
+  echo usage: new-cart.bat [--no-git] ^<name^> 1>&2
+  exit /b 1
+)
 set "NAME=%~1"
+shift
+goto args
+:args_done
+if not defined NAME goto usage_err
 
 rem  findstr's character ranges collate by locale rather than codepoint, so a
 rem  [a-z] style class can match characters it should not. Spell the classes
@@ -110,23 +129,67 @@ set "MAIN=!CART!\app\main.rb"
 >>"!MAIN!" echo   end
 >>"!MAIN!" echo end
 
+rem  Each cart is its own repository: carts\ is git-ignored by the console, so
+rem  a nested repo is the way a cart gets versioned. The ignore and attributes
+rem  files only exist when the repo does.
+if "!NO_GIT!"=="1" goto git_done
+where git >nul 2>&1
+if errorlevel 1 (
+  echo new-cart.bat: warning: git not found; skipped git init 1>&2
+  goto git_done
+)
+
+set "GITIGNORE=!CART!\.gitignore"
+>"!GITIGNORE!" echo .DS_Store
+>>"!GITIGNORE!" echo Thumbs.db
+
+set "GITATTR=!CART!\.gitattributes"
+>"!GITATTR!" echo *.rb text eol=lf
+>>"!GITATTR!" echo *.md text eol=lf
+>>"!GITATTR!" echo *.json text eol=lf
+>>"!GITATTR!" echo *.ldtk text eol=lf
+>>"!GITATTR!" echo *.png binary
+>>"!GITATTR!" echo *.ogg binary
+>>"!GITATTR!" echo *.wav binary
+>>"!GITATTR!" echo *.ttf binary
+
+git -C "!CART!" init -q
+if errorlevel 1 (
+  echo new-cart.bat: warning: git init failed in !CART! 1>&2
+  goto git_done
+)
+git -C "!CART!" add -A
+git -C "!CART!" commit -q -m "Scaffold !NAME! cart"
+if errorlevel 1 (
+  echo new-cart.bat: warning: repo initialized but the initial commit failed ^(set user.name and user.email, then commit in !CART!^) 1>&2
+  goto git_done
+)
+set "GIT_DONE=1"
+:git_done
+
 echo created !CART!
 echo   !CART!\app\main.rb
 echo   !CART!\sprites\
 echo   !CART!\sounds\
 echo   !CART!\maps\
 echo   !CART!\data\
+if exist "!CART!\.gitignore" (
+  echo   !CART!\.gitignore
+  echo   !CART!\.gitattributes
+)
 echo.
+if "!GIT_DONE!"=="1" echo initialized git repo with initial commit
 echo next: bin\run.bat !NAME!
 endlocal & exit /b 0
 
 :usage_ok
-echo usage: new-cart.bat ^<name^>
+echo usage: new-cart.bat [--no-git] ^<name^>
 echo.
 echo   creates carts\^<name^>\ with an app\main.rb skeleton and empty
-echo   sprites\, sounds\, maps\ and data\ directories.
+echo   sprites\, sounds\, maps\ and data\ directories, then makes it a
+echo   git repo with an initial commit. --no-git skips the repo.
 endlocal & exit /b 0
 
 :usage_err
-echo usage: new-cart.bat ^<name^> 1>&2
+echo usage: new-cart.bat [--no-git] ^<name^> 1>&2
 endlocal & exit /b 1

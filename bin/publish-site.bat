@@ -161,14 +161,16 @@ echo publish-site: packing !CART_DIR!
 rem The archive is the cart directory itself, which the site accepts as well as
 rem an archive containing one. The two names a desktop adds without being asked
 rem are excluded by name rather than by a dot rule: a cart is allowed to have
-rem files beginning with a dot.
+rem files beginning with a dot. A cart may also be its own repository, and its
+rem .git is tested on the path relative to the cart so an ancestor directory
+rem named .git cannot match.
 powershell -NoProfile -Command ^
   "Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem;" ^
   "$root = (Resolve-Path '!CART_DIR!').Path;" ^
   "$base = Split-Path $root -Parent;" ^
   "$z = [IO.Compression.ZipFile]::Open('!ARCHIVE!', 'Create');" ^
   "Get-ChildItem -LiteralPath $root -Recurse -File |" ^
-  "  Where-Object { $_.Name -ne '.DS_Store' -and $_.FullName -notmatch '__MACOSX' } |" ^
+  "  Where-Object { $_.Name -ne '.DS_Store' -and $_.FullName -notmatch '__MACOSX' -and $_.FullName.Substring($root.Length) -notmatch '^[\\/]\.git([\\/]|$)' } |" ^
   "  ForEach-Object {" ^
   "    $rel = $_.FullName.Substring($base.Length + 1).Replace([char]92, '/');" ^
   "    [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $_.FullName, $rel, 'Optimal') | Out-Null };" ^

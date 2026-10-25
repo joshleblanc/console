@@ -1,8 +1,10 @@
 #!/bin/sh
 # Scaffold a new cart: create carts/<name>/ with an app/main.rb skeleton and
-# the asset directories the console looks for.
+# the asset directories the console looks for, then make it its own git repo
+# with an initial commit -- carts/ is yours to version separately.
 #
 #   ./new-cart <name>
+#   ./new-cart --no-git <name>   skip the repo
 #
 # The name becomes the cart directory and -- run through the same camel-case
 # rule Console::Str.camel applies -- the class the entry file defines, so it
@@ -10,25 +12,37 @@
 # a letter.
 #
 # Exits non-zero when the name is invalid or carts/<name> already exists.
+# Git trouble is only ever a warning: the cart is still created and the
+# script exits zero.
 cd "$(dirname "$0")/.."
 
 die() { echo "new-cart: $*" >&2; exit 1; }
+warn() { echo "new-cart: warning: $*" >&2; }
 
 usage() {
-  echo "usage: new-cart <name>"
+  echo "usage: new-cart [--no-git] <name>"
   echo ""
   echo "  creates carts/<name>/ with an app/main.rb skeleton and empty"
-  echo "  sprites/, sounds/, maps/ and data/ directories."
+  echo "  sprites/, sounds/, maps/ and data/ directories, then makes it a"
+  echo "  git repo with an initial commit. --no-git skips the repo."
 }
 
-case "$1" in
-  -h|--help) usage; exit 0 ;;
-esac
+NO_GIT=0
+NAME=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --no-git) NO_GIT=1 ;;
+    -*) die "unknown option: $1" ;;
+    *)
+      [ -n "$NAME" ] && die "expected exactly one name (usage: new-cart [--no-git] <name>)"
+      NAME=$1
+      ;;
+  esac
+  shift
+done
 
-[ $# -eq 0 ] && { usage >&2; exit 1; }
-[ $# -gt 1 ] && die "expected exactly one name (usage: new-cart <name>)"
-
-NAME=$1
+[ -z "$NAME" ] && { usage >&2; exit 1; }
 
 printf '%s' "$NAME" | grep -Eq '^[A-Za-z][A-Za-z0-9_-]*$' \
   || die "'$NAME' is not a valid cart name (letters, digits, '-' and '_', starting with a letter)"
@@ -80,12 +94,50 @@ class $CLASS
 end
 EOF
 
+# Each cart is its own repository: carts/ is git-ignored by the console, so a
+# nested repo is the way a cart gets versioned. The ignore and attributes
+# files only exist when the repo does.
+GIT_DONE=0
+if [ "$NO_GIT" -eq 0 ]; then
+  if ! command -v git >/dev/null 2>&1; then
+    warn "git not found; skipped git init"
+  else
+    cat > "carts/$NAME/.gitignore" <<EOF
+.DS_Store
+Thumbs.db
+EOF
+    cat > "carts/$NAME/.gitattributes" <<EOF
+*.rb text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.ldtk text eol=lf
+*.png binary
+*.ogg binary
+*.wav binary
+*.ttf binary
+EOF
+    if ! git -C "carts/$NAME" init -q; then
+      warn "git init failed in carts/$NAME"
+    elif ! git -C "carts/$NAME" add -A ||
+         ! git -C "carts/$NAME" commit -q -m "Scaffold $NAME cart"; then
+      warn "repo initialized but the initial commit failed (set user.name and user.email, then commit in carts/$NAME)"
+    else
+      GIT_DONE=1
+    fi
+  fi
+fi
+
 echo "created carts/$NAME"
 echo "  carts/$NAME/app/main.rb"
 echo "  carts/$NAME/sprites/"
 echo "  carts/$NAME/sounds/"
 echo "  carts/$NAME/maps/"
 echo "  carts/$NAME/data/"
+if [ -f "carts/$NAME/.gitignore" ]; then
+  echo "  carts/$NAME/.gitignore"
+  echo "  carts/$NAME/.gitattributes"
+fi
 echo ""
+[ "$GIT_DONE" -eq 1 ] && echo "initialized git repo with initial commit"
 echo "next: ./bin/run $NAME"
 exit 0

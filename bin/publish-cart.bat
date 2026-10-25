@@ -267,6 +267,8 @@ rem     data, so those have to travel with it. Named explicitly, so this cannot
 rem     drift into "copy whatever is in carts\".
 xcopy "!CART_SRC!" "%STAGE%\carts\%CART%" /e /i /q /y >nul
 if errorlevel 1 call :die "could not stage the cart at !CART_SRC!"
+rem  A cart may be its own repository; its history is not part of the game.
+if exist "%STAGE%\carts\%CART%\.git" rd /s /q "%STAGE%\carts\%CART%\.git"
 
 rem  3. Fonts. DragonRuby reads these from the game root, so they cannot live
 rem     inside a cart; the console ships its own copy for a standalone build.
