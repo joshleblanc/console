@@ -299,10 +299,12 @@ class Arcade
     end
 
     def update
-      return if input.pressed?(:cancel)
-      return unless input.pressed?(:up) || input.pressed?(:down) ||
-                    input.pressed?(:accept)
-      pop_scene
+      # Navigation and selection belong to ui.menu, which already handles
+      # :up/:down for the cursor and :accept for choosing an item. Popping the
+      # scene on those same keys fought the menu's own keyboard handling, so
+      # the pause dismissed itself the instant you moved the cursor.
+      # :cancel is the keyboard shortcut for RESUME.
+      pop_scene if input.pressed?(:cancel)
     end
 
     def render
@@ -316,7 +318,14 @@ class Arcade
                         anchor_x: 0.5, size_px: 34, color: :accent
       Console.ui.menu x: card[:x] + 50, y: card[:y] + 40, w: card[:w] - 100,
                       items: %w[RESUME QUIT], key: 'pause_menu',
-                      row_h: 40, gap: 8
+                      row_h: 40, gap: 8,
+                      on_select: lambda { |item|
+                        if item == 'RESUME'
+                          pop_scene
+                        else
+                          goto :title
+                        end
+                      }
     end
 
     def leave

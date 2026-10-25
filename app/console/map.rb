@@ -325,7 +325,7 @@ module Console
 
         @solids << {
           x: col * grid,
-          y: @height - ((row + 1) * grid),
+          y: console_y(row * grid, grid),
           w: grid,
           h: grid,
           one_way: one_way_cell?(value),
@@ -357,11 +357,13 @@ module Console
         list.each do |t|
           next unless t.is_a?(Hash)
           px = t['px'] || [0, 0]
+          # `f` is a bitfield: 1 = flip x, 2 = flip y, 3 = both.
+          f = (t['f'] || 0).to_i
           @tiles << {
             px: [px[0].to_f, console_y(px[1].to_f, grid)],
             src: t['src'] || [0, 0],
-            flip_x: (t['f'] || 0).to_i == 1,
-            flip_y: (t['f'] || 0).to_i == 2,
+            flip_x: (f & 1) != 0,
+            flip_y: (f & 2) != 0,
             tile_id: t['t'],
             size: grid,
             layer: layer['__identifier'].to_s

@@ -92,10 +92,11 @@ rem  Each cart's whole output goes to the log, so a failure can show the
 rem  complete trace rather than a couple of grepped lines.
 rem  %~1 is a cart path (carts\mine or samples\arcade).
 "%DRAGONRUBY%" "%GAMEDIR%" --cart "%~1" --ticks "%TICKS%" >"%LOG%" 2>&1
+for %%A in ("%LOG%") do if %%~zA==0 if exist "%DRLOG%" type "%DRLOG%" >"%LOG%"
 
 findstr /i /l /c:"EXCEPTION" "%LOG%" >nul 2>&1
 if errorlevel 1 (
-  echo ok    %~1  (%TICKS% frames)
+  echo ok    %~1  ^(%TICKS% frames^)
   goto :eof
 )
 

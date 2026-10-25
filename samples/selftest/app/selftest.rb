@@ -1171,13 +1171,16 @@ class UISuite
     assert_equal 3, m[:items].size
   end
 
-  test 'menu items lay out vertically without overlapping' do
+  test 'menu items lay out top-down without overlapping' do
     reset
     m = Console.ui.menu x: 0, y: 0, w: 200, items: %w[A B C], row_h: 20,
                          gap: 5, key: 'test_menu_b'
     a = m[:items][0]
     b = m[:items][1]
-    assert_equal a[:y] + a[:h] + 5, b[:y]
+    # Item 0 is on top, so :up/:down move the highlight the way they read.
+    assert_equal b[:y] + b[:h] + 5, a[:y]
+    # y: is the bottom edge of the whole menu.
+    assert_equal 0, m[:items][2][:y]
   end
 
   test 'checkbox toggles on click' do
@@ -1970,5 +1973,413 @@ class BodySuite
     b = Console::Body.new(x: 10, y: 20, w: 16, h: 16)
     assert_equal 10.0, b.entity[:x]
     assert_equal :body, b.entity[:kind]
+  end
+end
+
+# ---------------------------------------------------------------------------
+# Regression tests from the library review. Each one pins a behaviour that was
+# broken before, so it lives with the suite it belongs to (reopened here).
+# ---------------------------------------------------------------------------
+
+class PaletteSuite
+  test 'a color hash keeps its alpha' do
+    h = Console::Palette.to_hash({ r: 1, g: 2, b: 3, a: 4 })
+    assert_equal 4, h[:a]
+  end
+end
+
+class SpritesSuite
+  test 'numeric_prefix reads plain and dashed frame numbers' do
+    assert_equal 3, Console::Sprites.numeric_prefix('run-3.png')
+    assert_equal 12, Console::Sprites.numeric_prefix('12.png')
+    assert_equal 9999, Console::Sprites.numeric_prefix('idle.png')
+  end
+end
+
+class DrawSuite
+  test 'a generated sprite drawn without w/h uses its generated size' do
+    Console.auto_sprite :review_natural, 12, 7
+    r = Console.draw.sprite path: :review_natural, x: 0, y: 0
+    assert_equal 12, r[:w]
+    assert_equal 7, r[:h]
+  end
+end
+
+class TweenSuite
+  test 'tween_all takes one from/to value per property' do
+    target = { x: 0, y: 0 }
+    ts = Console.tweens.tween_all target, %i[x y], from: [0, 10],
+                                  to: [100, 50], in: 10, now: 0
+    ts.each { |t| t.update 10 }
+    assert_equal 100, target[:x]
+    assert_equal 50, target[:y]
+    Console.tweens.cancel_tweens target
+  end
+
+  test 'loops without yoyo replay the tween from its start' do
+    target = { v: 0 }
+    t = Console::Tween.new target, :v, from: 0, to: 10, in: 5, loops: 2,
+                            now: 0
+    t.capture!
+    t.update 5
+    assert_equal 10, target[:v]
+    t.update 7
+    assert_almost_equal 4, target[:v], 0.001
+    t.update 10
+    assert t.done?
+  end
+
+  test 'the scheduler counts its own updates, not engine ticks' do
+    host = Console::TweenHost.new
+    fired = false
+    host.after(2) { fired = true }
+    host.update
+    refute fired
+    host.update
+    assert fired
+  end
+
+  test 'a hosted tween advances with its host' do
+    host = Console::TweenHost.new
+    target = { v: 0 }
+    host.tween target, :v, from: 0, to: 10, in: 10
+    5.times { host.update }
+    assert_almost_equal 5, target[:v], 0.001
+  end
+end
+
+class SceneSuite
+  def three_scenes(ctrl)
+    klass = setup_probe ctrl
+    ctrl.define :three, klass
+    ctrl
+  end
+
+  test 'unwind leaves every overlay and resumes the first scene' do
+    ctrl = three_scenes Console::SceneController.new($args)
+    ctrl.goto :one
+    ctrl.run false
+    ctrl.push :two
+    ctrl.run false
+    two = ctrl.instance
+    ctrl.push :three
+    ctrl.run false
+    assert_equal 3, ctrl.depth
+    ctrl.unwind
+    ctrl.run false
+    assert_equal 1, ctrl.depth
+    assert_equal :one, ctrl.current_name
+    assert_includes two.log, :leave
+  end
+
+  test 'unwind on the first scene keeps it' do
+    ctrl = three_scenes Console::SceneController.new($args)
+    ctrl.goto :one
+    ctrl.run false
+    ctrl.unwind
+    ctrl.run false
+    assert_equal :one, ctrl.current_name
+    assert_not_nil ctrl.instance
+  end
+
+  test 'goto out of an overlay also leaves the scene underneath' do
+    ctrl = three_scenes Console::SceneController.new($args)
+    ctrl.goto :one
+    ctrl.run false
+    first = ctrl.instance
+    ctrl.push :two
+    ctrl.run false
+    ctrl.goto :three
+    ctrl.run false
+    assert_includes first.log, :leave
+    assert_equal 1, ctrl.depth
+  end
+
+  test 'a hash of hook lambdas works as a scene' do
+    ctrl = Console::SceneController.new $args
+    seen = []
+    ctrl.define :hashy, { enter: ->(_) { seen << :enter },
+                          update: ->(_) { seen << :update } }
+    ctrl.goto :hashy
+    ctrl.run false
+    assert_includes seen, :enter
+    assert_includes seen, :update
+  end
+end
+
+class EntitySuite
+  test 'despawning inside each_entity visits every entity' do
+    4.times { Console.entities.spawn nil, kind: :doomed }
+    visited = 0
+    Console.entities.each(:doomed) do |e|
+      visited += 1
+      Console.entities.despawn e
+    end
+    assert_equal 4, visited
+    assert_equal 0, Console.entities.count(:doomed)
+  end
+
+  test 'an entity despawned earlier in a pass is not yielded' do
+    a = Console.entities.spawn nil, kind: :pair
+    b = Console.entities.spawn nil, kind: :pair
+    seen = []
+    Console.entities.each(:pair) do |e|
+      seen << e[:id]
+      Console.entities.despawn(e[:id] == a[:id] ? b : a)
+    end
+    assert_equal 1, seen.size
+  end
+
+  test 'toward aims velocity at the target' do
+    e = Console.entities.spawn nil, kind: :seeker, x: 0, y: 0, w: 10, h: 10
+    Console.entities.toward e, { x: 100, y: 0, w: 10, h: 10 }, 3
+    assert_almost_equal 3, e[:vx], 0.001
+    assert_almost_equal 0, e[:vy], 0.001
+    Console.entities.toward e, { x: 0, y: -100, w: 10, h: 10 }, 2
+    assert_almost_equal 0, e[:vx], 0.001
+    assert_almost_equal(-2, e[:vy], 0.001)
+  end
+
+  test 'the api move takes one options hash' do
+    cart = Object.new
+    cart.extend Console::API
+    e = Console.entities.spawn nil, kind: :thing, x: 1, y: 1
+    cart.move e, vx: 2, vy: 3
+    assert_equal 3, e[:x]
+    assert_equal 4, e[:y]
+  end
+end
+
+class AnimationSuite
+  test 'a sheet takes frames: as a frame count, as documented' do
+    e = { id: 900_101, kind: :hero, w: 16, h: 16 }
+    frame = Console.anim.play e, :walk, sheet: 'sprites/star.png',
+                              frame_w: 16, frame_h: 16, frames: 4
+    assert_not_nil frame
+    assert_equal 4, frame.frame_count
+    assert_equal 16, Console.anim.primitive_props(e)[:source_w]
+  end
+
+  test 'on_finish plays the next state once a one-shot ends' do
+    e = { id: 900_102, kind: :hero, w: 16, h: 16 }
+    Console.anim.play e, :hit, frames: ['a.png'], frame_count: 1, fps: 60,
+                      repeat: false, lock: 600, on_finish: :star
+    3.times { Console.anim.update }
+    assert Console.anim.playing?(900_102, :star)
+  end
+
+  test 'on_finish may be a callable, and the lock does not refuse it' do
+    e = { id: 900_103, kind: :hero, w: 16, h: 16 }
+    got = []
+    Console.anim.play e, :hit, frames: ['a.png'], frame_count: 1, fps: 60,
+                      repeat: false, lock: 600,
+                      on_finish: lambda { |ent|
+                        got << ent[:id]
+                        Console.anim.play ent, :run, frames: ['b.png']
+                      }
+    3.times { Console.anim.update }
+    assert_equal [900_103], got
+    assert Console.anim.playing?(900_103, :run)
+  end
+end
+
+class CameraSuite
+  test 'bounds keep the far edge of the view inside the world' do
+    cam = Console.camera
+    cam.bounds = { x: 0, y: 0, w: 2000, h: 2000 }
+    cam.x = 5000.0
+    cam.y = 5000.0
+    cam.update
+    v = cam.visible_rect
+    assert_almost_equal 2000, v[:x] + v[:w], 0.001
+    assert_almost_equal 2000, v[:y] + v[:h], 0.001
+  end
+
+  test 'bounds account for zoom' do
+    cam = Console.camera
+    cam.zoom = 2.0
+    cam.bounds = { x: 0, y: 0, w: 2000, h: 2000 }
+    cam.x = -5000.0
+    cam.update
+    assert_almost_equal 0, cam.visible_rect[:x], 0.001
+    cam.x = 5000.0
+    cam.update
+    v = cam.visible_rect
+    assert_almost_equal 2000, v[:x] + v[:w], 0.001
+  end
+
+  test 'a world smaller than the screen is centred' do
+    cam = Console.camera
+    cam.bounds = { x: 0, y: 0, w: 400, h: 200 }
+    cam.update
+    v = cam.visible_rect
+    assert_almost_equal 200, v[:x] + (v[:w] / 2.0), 0.001
+    assert_almost_equal 100, v[:y] + (v[:h] / 2.0), 0.001
+  end
+
+  test 'visible_rect starts at the bottom-left of the view' do
+    v = Console.camera.visible_rect
+    assert_almost_equal 0, v[:x], 0.001
+    assert_almost_equal 0, v[:y], 0.001
+    assert Console.camera.visible?({ x: 10, y: 10, w: 5, h: 5 })
+    refute Console.camera.visible?({ x: -50, y: -50, w: 5, h: 5 })
+  end
+
+  test 'the camera can be tweened like a hash' do
+    cam = Console.camera
+    cam[:zoom] = 1.5
+    assert_equal 1.5, cam.zoom
+    assert_equal 1.5, cam[:zoom]
+  end
+end
+
+class UISuite
+  test 'menu top: hangs the first item from that edge' do
+    reset
+    grid = $args.grid
+    m = Console.ui.menu x: 0, top: 100, w: 200, items: %w[A B], row_h: 20,
+                         gap: 5, key: 'test_menu_top'
+    assert_equal grid.h - 100, m[:items][0][:y] + 20
+    assert m[:items][1][:y] < m[:items][0][:y]
+  end
+
+  test 'cancel clears a focused button' do
+    reset
+    Console.input.pointer[:pressed] = false
+    Console.ui_store['ui_focus'] = 'btn_cancel_me'
+    Console.input.actions[:cancel][:pressed] = true
+    r = Console.ui.button x: 900, y: 600, w: 10, h: 10, id: 'cancel_me'
+    Console.input.actions[:cancel][:pressed] = false
+    assert_equal false, r[:focused]
+    assert_nil Console.ui_store['ui_focus']
+  end
+end
+
+class InputSuite
+  test 'released? never raises for an unknown action' do
+    assert_equal false, Console.input.released?(:not_a_real_action)
+  end
+end
+
+class RuntimeSuite
+  test 'text input can be started and stopped from the api' do
+    cart = Object.new
+    cart.extend Console::API
+    cart.start_text_input
+    assert_equal true, Console.input.text_enabled
+    cart.stop_text_input
+    assert_equal false, Console.input.text_enabled
+  end
+
+  test 'a repeated warning is shown once' do
+    Console.warn 'review: duplicate warning'
+    Console.warn 'review: duplicate warning'
+    same = Console.warnings.select { |w| w[:text] == 'review: duplicate warning' }
+    assert_equal 1, same.size
+    Console.warnings = Console.warnings.reject { |w| w[:text] == 'review: duplicate warning' }
+  end
+end
+
+class AudioSuite
+  include Console::Test
+
+  class FakeOutputs
+    attr_reader :sounds
+
+    def initialize
+      @sounds = []
+    end
+  end
+
+  class FakeArgs
+    attr_reader :audio, :outputs
+
+    def initialize
+      @audio = {}
+      @outputs = FakeOutputs.new
+    end
+  end
+
+  def setup
+    @args = FakeArgs.new
+    @audio = Console::Audio.new @args
+    @audio.register :song, 'sounds/song.ogg'
+  end
+
+  test 'music_gain changes the volume without stopping the track' do
+    @audio.music :song
+    @audio.music_gain 0.5
+    live = @args.audio[Console::Audio::MUSIC_KEY]
+    assert_not_nil live, 'music_gain stopped the track'
+    assert_almost_equal 0.5, live[:gain], 0.001
+    assert @audio.music_playing?
+  end
+
+  test 'the master gain scales every sfx' do
+    @audio.music_gain 0.5
+    prim = @audio.sfx :song
+    assert_almost_equal 0.5, prim[:gain], 0.001
+    prim = @audio.sfx :song, gain: 0.5
+    assert_almost_equal 0.25, prim[:gain], 0.001
+  end
+end
+
+class MapSuite
+  def tiny_level(layer)
+    { 'identifier' => 'Tiny', 'pxWid' => 32, 'pxHei' => 32,
+      'layerInstances' => [layer] }
+  end
+
+  test 'tile flip flags are read as a bitfield' do
+    level = tiny_level('__type' => 'Tiles', '__gridSize' => 16,
+                       '__identifier' => 'T',
+                       'gridTiles' => [{ 'px' => [0, 0], 'src' => [0, 0],
+                                         'f' => 3, 't' => 1 }])
+    t = Console::Map.from_hash(level).tiles.first
+    assert t[:flip_x]
+    assert t[:flip_y]
+  end
+
+  test 'intgrid solids honour flip_y false' do
+    level = tiny_level('__type' => 'IntGrid', '__gridSize' => 16,
+                       '__cWid' => 2, '__cHei' => 2,
+                       'intGridCsv' => [1, 0, 0, 0])
+    assert_equal 16.0, Console::Map.from_hash(level).solids.first[:y]
+    raw = Console::Map.from_hash(level, flip_y: false)
+    assert_equal 0.0, raw.solids.first[:y]
+  end
+end
+
+class BodySuite
+  test 'a one_way platform never blocks sideways motion' do
+    plat = [solid(100, 16, 50, 8, true)]
+    b = Console::Body.new(x: 80, y: 16, w: 16, h: 16, gravity: 0.0)
+    10.times do
+      b.vx = 10
+      b.update plat
+    end
+    refute b.wall?
+    assert b.x > 150, "stopped at x=#{b.x}"
+  end
+
+  test 'a body that peaks inside a one_way platform falls back through' do
+    plat = [solid(0, 60, 200, 8, true)]
+    b = Console::Body.new(x: 50, y: 50, w: 16, h: 16, gravity: 1.0)
+    b.update plat
+    assert_equal false, b.grounded?
+    assert b.y < 50, "popped up to y=#{b.y}"
+  end
+
+  test 'fall_distance is measured in pixels' do
+    b = Console::Body.new(x: 50, y: 500, w: 16, h: 16, gravity: 1.0)
+    10.times { b.update [] }
+    assert_almost_equal 500 - b.y, b.fall_distance, 0.001
+  end
+
+  test 'x resolution uses the direction of travel, not the zeroed vx' do
+    b = Console::Body.new(x: 90, y: 0, w: 16, h: 16, gravity: 0.0)
+    b.vx = 0.0
+    b.resolve :x, [solid(100, 0, 16, 16)], 1
+    assert_equal 84.0, b.x
   end
 end

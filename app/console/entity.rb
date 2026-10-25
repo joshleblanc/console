@@ -102,11 +102,15 @@ module Console
       @entities.select { |e| e[:kind] == kind.to_sym }
     end
 
+    # Iterates a snapshot, so the block may despawn (or spawn) freely: deleting
+    # from the live array mid-loop would silently skip the next entity. An
+    # entity despawned earlier in the same pass is not yielded.
     def each(kind = nil, &block)
-      if kind.nil?
-        @entities.each(&block)
-      else
-        @entities.each { |e| block.call e if e[:kind] == kind.to_sym }
+      k = kind.nil? ? nil : kind.to_sym
+      @entities.dup.each do |e|
+        next if k && e[:kind] != k
+        next unless @by_id[e[:id]].equal?(e)
+        block.call e
       end
       @entities.size
     end
@@ -156,9 +160,10 @@ module Console
 
     # --- motion ----------------------------------------------------------
 
-    def move(entity, vx: 0, vy: 0)
-      entity[:x] = entity[:x] + vx
-      entity[:y] = entity[:y] + vy
+    # move entity, vx: 3, vy: -2   (one options hash; see Console::API)
+    def move(entity, options = {})
+      entity[:x] = entity[:x] + (options[:vx] || 0)
+      entity[:y] = entity[:y] + (options[:vy] || 0)
       entity
     end
 
@@ -168,16 +173,24 @@ module Console
       entity
     end
 
+    # Aim vx/vy from the entity's centre at the target's centre.
     def toward(entity, target, speed)
       c = Geom.center entity
       t = Geom.center target
-      a = Geometry.angle c, t
-      entity[:vx] = Math.sin(a.to_radians) * speed
-      entity[:vy] = Math.cos(a.to_radians) * speed
+      dx = t[:x] - c[:x]
+      dy = t[:y] - c[:y]
+      len = Math.sqrt((dx * dx) + (dy * dy))
+      if len == 0
+        entity[:vx] = 0.0
+        entity[:vy] = 0.0
+      else
+        entity[:vx] = dx / len * speed
+        entity[:vy] = dy / len * speed
+      end
       entity
     end
 
-    # Distance from a point to the centre of `rect`.
+    # The geometric centre of `rect`.
     def center(rect)
       Geom.center rect
     end

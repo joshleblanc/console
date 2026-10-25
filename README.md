@@ -526,9 +526,11 @@ on_enter(:play) { music :game }
 on_leave(:play) { stop_music }
 ```
 
-A scene may implement `enter`, `update`, `render` and `leave`. Scene changes are
+A scene may implement `enter`, `update`, `render` and `leave` (or be a Hash of
+those hooks as lambdas). Scene changes are
 committed at the end of the frame, so calling `goto` from inside `update` never
-leaves the frame half-applied.
+leaves the frame half-applied. `goto` and `unwind` run `leave` on every scene
+they remove, including one paused under an overlay.
 
 > The hook is `render`, **not** `draw`: `draw` is the console's rendering object
 > (`draw.rect`, `draw.sprite`). A scene that defined `draw` would shadow it.
@@ -605,7 +607,9 @@ s = ui.slider x: 0, y: 0, w: 200, key: 'volume', min: 0, max: 100
 ```
 
 Widgets are pointer- and keyboard/gamepad-navigable: hover a button or focus a
-menu and `:accept` activates it.
+menu and `:accept` activates it; `:cancel` drops a button's or slider's focus.
+A menu lists its items top-down (item 0 on top), and its `y:`/`top:` place the
+bottom/top edge of the whole list.
 
 ### Input
 
@@ -625,7 +629,9 @@ input.typed               # requires start_text_input
 
 Actions: `:up :down :left :right :accept :cancel :pause :action_1 :action_2
 :action_3 :action_4 :debug_toggle`. Add your own by extending
-`Console::Input::ACTIONS`.
+`Console::Input::ACTIONS`. On the keyboard `:action_1`/`:action_2` are Q/E
+(kept clear of WASD, which already drives the directions); on a pad they are
+L1/R1, and `:action_3`/`:action_4` are L2/R2.
 
 ### Entities
 
@@ -636,6 +642,8 @@ means they are already valid DragonRuby primitives.
 ship = spawn :ship, kind: :hero, x: 100, y: 100, w: 24, h: 24, sprite: :hero
 
 each_entity(:enemy) { |e| move e, vx: e[:vx], vy: e[:vy] }
+each_entity(:bullet) { |b| despawn b if b[:y] > 900 }   # despawning mid-loop is safe
+toward ship, target, 4   # aim ship[:vx]/[:vy] at target, 4px per frame
 entities_of(:bullet)
 colliding(ship, :enemy).each { |e| despawn e }
 despawn_if { |e| e[:y] > 900 }
@@ -664,6 +672,7 @@ playing `:run` looks in `sprites/hero/run/*.png`, ordered by filename number.
 ```ruby
 animate entity, :run                     # loops
 animate entity, :hit, repeat: false      # one-shot
+animate entity, :hit, repeat: false, on_finish: :idle   # one-shot, then idle
 animate entity, :die, lock: 24           # uninterruptible for 24 ticks
 animate entity, :walk, sheet: 'hero.png', frame_w: 16, frame_h: 20,
                  frames: 6               # a sprite sheet, cropped
@@ -698,7 +707,7 @@ console's starter art as a fallback.
 sfx :shoot
 sfx :hit, pitch: 0.8, gain: 0.5
 music :title
-music_gain 0.4
+music_gain 0.4            # master volume: the playing track and every sfx
 stop_music
 mute
 ```
@@ -721,6 +730,12 @@ end
 
 Everything inside `apply` is world space; everything outside is screen space.
 That is the usual split: world inside, HUD after.
+
+A followed entity is tracked every frame without calling `camera.update`.
+`camera.bounds` keeps the whole view (at the current zoom) inside the world, and
+centres a world smaller than the screen. `camera.visible_rect` is the world
+rect on screen, and the camera can be tweened like a hash
+(`tween camera, :zoom, to: 2.0, in: 20`).
 
 ### Levels (LDTK)
 
@@ -813,7 +828,8 @@ b.update map.solids
 bottom-left origin makes falling a negative `vy`.
 
 Solids are `{ x:, y:, w:, h: }` plus an optional `one_way:` flag, and they are
-static — moving platforms are left to the cart.
+static — moving platforms are left to the cart. A one-way solid only catches a
+body falling onto it from above; it never blocks rising or sideways motion.
 
 Three details do the real work:
 
@@ -834,11 +850,16 @@ tween entity, :x, to: 400, in: 30
 tween entity, :alpha, to: 0, in: 30, ease: :out
 tween_all entity, %i[x y], from: [0, 0], to: [100, 100], in: 60
 
-after 30 { spawn Enemy, x: 100, y: 100 }
-every 60, immediate: true { next_wave }
+after(30) { spawn Enemy, x: 100, y: 100 }
+every(60, immediate: true) { next_wave }
 ```
 
-Easings: `:linear :in :out :in_out :smooth :elastic :bounce`.
+Easings: `:linear :in :out :in_out :smooth :elastic :bounce`. `loops: n` replays
+the tween n times; add `yoyo: true` to alternate direction instead.
+
+Timers and tweens run on the console's own clock, which stops while a
+`push_scene` overlay is up: a pause freezes them rather than letting them
+fire the moment play resumes.
 
 ### Geometry
 
@@ -907,6 +928,8 @@ CONSOLE_TEST_STATUS=PASS TESTS=192 ASSERTIONS=1539 FAILURES=0
 ```
 
 `./bin/smoke` additionally boots every cart headlessly and fails if any raises.
+On Windows `dragonruby.exe` is a GUI program whose stdout cannot be captured, so
+`run-test.bat` and `smoke.bat` read the engine's `..\logs\console.log` instead.
 
 ---
 

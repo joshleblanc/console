@@ -13,10 +13,12 @@
 # object (`draw.rect`, `draw.sprite`), and a scene that defined `draw` would
 # shadow it and recurse.
 #
-# A scene can be a Symbol paired with a class, a class, or a bare block set:
+# A scene is a class (instantiated on entry) or a Hash of hook lambdas, each
+# called with the Hash itself:
 #
 #   scene :title, TitleScene
 #   scene :play, PlayScene
+#   scene :credits, { render: ->(_) { Console.draw.text 'thanks', x: 10, y: 10 } }
 #
 #   goto :play                 # replace the whole stack
 #   push :pause                # overlay, keeps :play underneath
@@ -37,10 +39,11 @@ module Console
       @options = options
     end
 
-    # Build the per-scene instance. `kind` is :class, :block, or :none.
+    # Build the per-scene instance. `kind` is :class, :block (a Hash of hook
+    # lambdas, e.g. `{ update: ->(s) { ... } }`), or :none.
     def kind
       return :class if @klass.is_a?(Class)
-      return :block if @klass.respond_to?(:call)
+      return :block if @klass.is_a?(Hash)
       :none
     end
   end
@@ -204,20 +207,31 @@ module Console
       d = @defs[under]
       return unless d
       inst = instance_for under, d
-      dispatch :render, inst
+      # Pass d explicitly. Without it dispatch resolves @defs[@current] -- the
+      # OVERLAY -- so a block-kind scene underneath would fail its
+      # respond_to? check and silently not draw at all.
+      dispatch :render, inst, d
       draw_arg.rect x: 0, y: 0, w: @args.grid.w, h: @args.grid.h,
                      color: :black, alpha: 160
     end
 
-    def dispatch(hook, inst)
-      d = @defs[@current]
+    # True when an overlay sits on top of the active scene. A push_scene overlay
+    # is a pause: the scene underneath stops updating, and the console freezes
+    # the schedulers to match. Without this, world logic driven by `after`,
+    # `every`, tweens or `animate` keeps running behind the overlay -- entities
+    # stop moving but keep dying, which is not a pause.
+    def overlay?
+      @stack.size > 1
+    end
+
+    def dispatch(hook, inst, d = nil)
+      d ||= @defs[@current]
       return unless d
       if d.kind == :class
         return unless inst.respond_to?(hook)
         return unless inst.method(hook).arity == 0
         inst.send hook
       elsif d.kind == :block
-        return unless d.klass.respond_to?(:[])
         return unless d.klass.key?(hook)
         d.klass[hook].call inst
       end
@@ -225,47 +239,52 @@ module Console
 
     private
 
-    def activate(name)
+    def activate(name, resume = false)
       d = @defs[name]
       unless d
         puts "Console: scene #{name} is not defined; ignoring."
         return
       end
       @current_instance = instance_for name, d
-      dispatch :enter, @current_instance
-      (@enter_hooks[name.to_sym] || []).each { |h| h.call @current_instance }
+      # Resuming must NOT re-run `enter`. Everything the scene was holding
+      # lives on its instance, and re-entering would wipe it -- which is
+      # precisely the difference between pop (resume) and goto (restart).
+      unless resume
+        dispatch :enter, @current_instance
+        (@enter_hooks[name.to_sym] || []).each { |h| h.call @current_instance }
+      end
       # A scene may immediately request another change (common for routing
       # guards), so give it a chance before drawing anything.
       commit if pending?
     end
 
-    def leave(name)
+    def leave(name, inst = @current_instance)
       return if name.nil?
       d = @defs[name]
-      inst = @current_instance
-      if d
-        dispatch_leave d, inst
-      end
+      dispatch :leave, inst, d if d
       (@leave_hooks[name.to_sym] || []).each { |h| h.call inst }
-      @current_instance = nil
+      @current_instance = nil if inst.equal?(@current_instance)
     end
 
-    def dispatch_leave(d, inst)
-      if d.kind == :class
-        return unless inst.respond_to?(:leave)
-        return unless inst.method(:leave).arity == 0
-        inst.leave
-      elsif d.kind == :block
-        return unless d.klass.respond_to?(:[])
-        return unless d.klass.key?(:leave)
-        d.klass[:leave].call inst
-      end
+    # The live instance for a scene on the stack: the active one, or the cached
+    # instance of a scene paused underneath an overlay.
+    def instance_of(name)
+      return @current_instance if name == @current
+      d = @defs[name]
+      return nil unless d
+      d.kind == :block ? d.klass : (@instances || {})[name]
     end
 
     def instance_for(name, d)
       case d.kind
       when :class
-        d.klass.new
+        # Cached per scene name. A scene that was pushed over has to survive the
+        # trip, because pop_scene RESUMES it: building a fresh instance here
+        # would hand the resumed scene nil state, which is what made
+        # draw_below crash and left pop_scene rendering a frozen screen.
+        # `goto` clears this cache, so a hard restart still gets a clean slate.
+        @instances ||= {}
+        @instances[name] ||= d.klass.new
       when :block
         d.klass
       else
@@ -276,11 +295,14 @@ module Console
     def commit
       if @pending_clear
         @pending_clear = false
-        return if @stack.empty?
-        top = @stack.pop
-        leave top
+        return if @stack.size <= 1
+        # Leave every overlay, top first, then resume the bottom scene.
+        while @stack.size > 1
+          top = @stack.pop
+          leave top, instance_of(top)
+        end
         @current = @stack.last
-        @current_instance = nil
+        activate @current, true
         return
       end
 
@@ -290,7 +312,11 @@ module Console
         top = @stack.pop
         leave top
         @current = @stack.last
-        @current_instance = nil
+        # Resume, do not restart: re-activate the scene underneath WITHOUT
+        # running `enter`. Setting @current_instance = nil and returning here is
+        # what froze the screen -- every later dispatch then hit
+        # `return unless inst.respond_to?(hook)` on nil.
+        activate @current, true
         return
       end
 
@@ -303,10 +329,13 @@ module Console
         return if @stack.include?(name)
         @stack.push name
       else
-        # `goto` replaces the stack: leave whatever was actually active, then
-        # reset the stack to just the new scene.
-        leave @current if @current
+        # `goto` replaces the stack: leave every scene on it, top first, so a
+        # goto out of a pause overlay also runs the paused scene's `leave`.
+        @stack.reverse.each { |n| leave n, instance_of(n) }
         @stack = [name]
+        # ...and drop every cached scene instance. `goto` is a hard restart,
+        # so the destination must be entered fresh -- unlike pop, which resumes.
+        @instances = {}
       end
 
       @history.push @current

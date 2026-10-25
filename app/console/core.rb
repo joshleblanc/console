@@ -17,7 +17,8 @@
 #
 #   1. input snapshot          so a whole frame sees one consistent input state
 #   2. timers / tickers / tweens
-#   3. animations advance
+#   3. animations advance, a following camera tracks its target
+#      (2 and 3 are frozen while a push_scene overlay is up)
 #   4. scene update + scene draw   (or, with no scenes, cart update)
 #   5. cart render (always last, so it is the place for a HUD)
 #   6. HUD / warnings
@@ -147,13 +148,20 @@ module Console
       @show_hud = !@show_hud
     end
 
-    # 2. scheduled work
-    tweens.update
+    # 2/3. scheduled work + animations.
+    #
+    # Frozen while a push_scene overlay is up. `after`, `every` and tweens are
+    # global to the console rather than scoped to the scene that registered
+    # them, so without this gate a pause froze the scene's `update` but let
+    # timers keep firing -- enemies stopped moving and kept despawning.
+    unless cart_uses_scenes? && scenes.overlay?
+      tweens.update
+      anim.update
+      # A followed entity is tracked without the cart calling camera.update.
+      camera.update if camera.following?
+    end
 
-    # 3. animations
-    anim.update
-
-        # 4. gameplay + scene draw
+    # 4. gameplay + scene draw
     if cart_uses_scenes?
       scenes.run true
     else
@@ -233,11 +241,30 @@ module Console
   # playing, short enough that a fixed warning does not cover the game forever.
   WARNING_TICKS = 420
 
+  # Repeats of a warning that is already on screen only extend its lifetime.
+  # Callers such as `sprite` run every frame, and without this a single bad
+  # name flooded the log and filled every on-screen slot with the same line.
   def self.warn(message)
+    until_tick = Kernel.tick_count + WARNING_TICKS
+    existing = @warnings.find { |w| w[:text] == message }
+    if existing
+      existing[:until_tick] = until_tick
+      return message
+    end
     debug message
-    @warnings << { text: message, until_tick: Kernel.tick_count + WARNING_TICKS }
+    @warnings << { text: message, until_tick: until_tick }
     @warnings = @warnings.last(6)
     message
+  end
+
+  # Typed-text collection, reached from carts as start_text_input /
+  # stop_text_input.
+  def self.start_text_input
+    input.enable_text
+  end
+
+  def self.stop_text_input
+    input.disable_text
   end
 
   def self.warn_sprite(name)
@@ -316,10 +343,6 @@ module Console
     args.outputs.screenshots << { x: 0, y: 0, w: grid.w, h: grid.h,
                                   path: @shot_path, a: 255 }
     @shot_path = nil
-  end
-
-  def self.quit_after=(ticks)
-    @quit_after = ticks
   end
 
   def self.handle_quit(tick_count)
@@ -511,6 +534,11 @@ module Console
 
     def move(entity, options = {})
       Console.entities.move entity, options
+    end
+
+    # Point an entity's vx/vy at a target at `speed` pixels per frame.
+    def toward(entity, target, speed)
+      Console.entities.toward entity, target, speed
     end
 
     # --- animation --------------------------------------------------------

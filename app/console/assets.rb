@@ -42,6 +42,7 @@ module Console
     def boot(cart_root)
       @root = cart_root.nil? || cart_root.to_s.empty? ? nil : cart_root.to_s
       @fallbacks = []
+      @found = {}
       self
     end
 
@@ -66,12 +67,18 @@ module Console
       return path if scoped_inside? path
       return path unless scoped?
 
+      # Draw calls resolve every frame, so files that were found are cached.
+      # Misses are not, so an asset added while the game runs still resolves.
+      @found ||= {}
+      hit = @found[path]
+      return hit if hit
+
       inside = "#{@root}/#{path}"
       if DR.stat_file inside
-        inside
+        @found[path] = inside
       elsif DR.stat_file path
         note_fallback path
-        path
+        @found[path] = path
       else
         inside
       end

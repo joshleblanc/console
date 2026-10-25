@@ -90,7 +90,16 @@ module Console
     # taken as a path, which is what lets a cart live in games/ or demos/
     # instead of carts/ without the console caring.
     def cart_dir(target)
+<<<<<<< HEAD
       s = Console::Str.chomp_slash Console::Str.backslash_to_slash(target)
+=======
+      # Normalise the separator FIRST. A Windows target arrives as carts\space
+      # (the README documents that form), and the test below only recognises
+      # '/', so a backslash target used to fall through as a bare NAME and
+      # resolve to carts/carts\space -- which does not exist, so the console
+      # silently booted the default cart instead of the one asked for.
+      s = Console::Str.chomp_slash target.to_s.gsub('\\', '/')
+>>>>>>> b45682af0c0f6bec3c421a42209ec7c0907a54f2
       return nil if s.empty?
       return s if s.include? '/'
       gallery_dir s
@@ -191,7 +200,10 @@ module Console
     # --- running ----------------------------------------------------------
 
     def run
-      handle_list if switch?(:list)
+      if switch?(:list)
+        handle_list
+        return nil
+      end
 
       target = requested_name
       dir = cart_dir target
@@ -376,21 +388,14 @@ module Console
       Console::Str.quoted_value_after(source, 'TITLE')
     end
 
-    def handle_test
-      summary = run_selftest
-      puts Console::Test.summary_line(summary)
-      quit_now(summary[:status] == 'PASS')
-    end
-
     def abort_boot(message)
       puts "[console] BOOT ERROR: #{message}"
       @errors << message
       DR.request_quit
     end
 
-    def quit_now(ok = true)
+    def quit_now(_ok = true)
       DR.request_quit
-      @quit_status = ok ? 0 : 1
     end
 
     # Is a switch present?

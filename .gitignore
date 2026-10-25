@@ -16,4 +16,6 @@ dragonstation.json
 carts/*
 !carts/.keep/
 *.zip
+shots/
+errors/
 

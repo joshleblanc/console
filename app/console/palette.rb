@@ -31,7 +31,9 @@ module Console
             elsif color.is_a?(Array)
               color
             elsif color.is_a?(Hash)
-              [color[:r] || 255, color[:g] || 255, color[:b] || 255]
+              c = [color[:r] || 255, color[:g] || 255, color[:b] || 255]
+              c << color[:a] if color[:a]
+              c
             else
               COLORS[:white]
             end
@@ -42,7 +44,7 @@ module Console
       h
     end
 
-    # Convenience for the common "give me an rgba triplet" case.
+    # Convenience for the common "give me an [r, g, b]" case.
     def to_a(color)
       h = to_hash color
       [h[:r], h[:g], h[:b]]

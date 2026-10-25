@@ -64,6 +64,18 @@ module Console
     # Keeping these distinct is deliberate: an absolute x of 10 must never be
     # reinterpreted as "10 times the bounds width".
     def resolve(spec)
+      # World space in, screen space out. This is the single choke point where
+      # the camera offset and zoom are applied, so every primitive gets them for
+      # free -- and because `transform` is a no-op with no active camera, a
+      # world drawn without camera.apply renders exactly as before.
+      transform resolve_raw(spec)
+    end
+
+    # Geometry only: turns a spec into absolute pixels WITHOUT the camera.
+    # Primitives that consume another primitive's already-resolved rect must
+    # emit directly rather than feed it back through resolve, or the camera
+    # offset gets applied twice. Those callers use emit_rect/emit_border.
+    def resolve_raw(spec)
       spec ||= {}
       if spec[:place]
         inner = spec[:place]
@@ -134,23 +146,14 @@ module Console
     def rect(spec = {})
       color = spec[:color] || :white
       alpha = spec[:alpha]
-      r = resolve strip_color(spec)
-      outputs.sprites << r.merge(Palette.to_hash(color, alpha)).merge(path: :solid)
-      r
+      emit_rect resolve(strip_color(spec)), color, alpha
     end
 
     # An unfilled rectangle, drawn `thickness` times inset.
     def border(spec = {}, thickness = 1)
       color = spec[:color] || Style.get(:border)
       alpha = spec[:alpha]
-      r = resolve strip_color(spec)
-      thickness.times do |i|
-        outputs.borders << { x: r[:x] + i,
-                             y: r[:y] + i,
-                             w: r[:w] - (i * 2),
-                             h: r[:h] - (i * 2) }.merge(Palette.to_hash(color, alpha))
-      end
-      r
+      emit_border resolve(strip_color(spec)), color, alpha, thickness
     end
 
     # A panel: filled background plus a 1px border.
@@ -159,8 +162,8 @@ module Console
       alpha = spec[:alpha]
       border_color = spec[:border_color]
       r = resolve spec
-      rect(absolute(r).merge(color: color, alpha: alpha))
-      border(absolute(r).merge(color: border_color || Style.get(:border)))
+      emit_rect r, color, alpha
+      emit_border r, border_color || Style.get(:border), alpha
       r
     end
 
@@ -202,7 +205,6 @@ module Console
     def sprite_sheet_frame(spec = {})
       fw = spec[:frame_w]
       fh = spec[:frame_h]
-      cols = spec[:frame_count] || 1
       i = spec[:frame_index] || 0
       sprite(spec.merge(source_x: i * fw,
                         source_y: 0,
@@ -251,6 +253,16 @@ module Console
     def line(x1, y1, x2, y2, color = :white, thickness = 1)
       c = Palette.to_hash color
       thickness = 1 if thickness < 1
+      # A line carries its coordinates directly instead of going through
+      # resolve, so project the endpoints explicitly. A zero-size rect
+      # transforms exactly like a point and reuses the same maths as every
+      # other primitive, so a line inside camera.apply stays glued to the world.
+      a = transform({ x: x1, y: y1, w: 0, h: 0 })
+      b = transform({ x: x2, y: y2, w: 0, h: 0 })
+      x1 = a[:x]
+      y1 = a[:y]
+      x2 = b[:x]
+      y2 = b[:y]
       dx = x2 - x1
       dy = y2 - y1
       len = Math.sqrt((dx * dx) + (dy * dy))
@@ -274,10 +286,13 @@ module Console
       bg = spec[:bg] || Style.get(:panel_d)
       fg = spec[:color] || Style.get(:accent)
       perc = Geom.perc value, max
-      rect(x: r[:x], y: r[:y], w: r[:w], h: r[:h], color: bg)
+      # `r` arrives already resolved, so emit directly rather than re-resolving.
+      emit_rect r, bg, nil
       fill_w = r[:w] * perc
-      rect(x: r[:x], y: r[:y], w: fill_w, h: r[:h], color: fg) if fill_w > 0
-      border(r) if spec[:border]
+      if fill_w > 0
+        emit_rect({ x: r[:x], y: r[:y], w: fill_w, h: r[:h] }, fg, nil)
+      end
+      emit_border r, Style.get(:border), nil if spec[:border]
       fill_w
     end
 
@@ -300,7 +315,8 @@ module Console
         col_rects.each do |c|
           cell = { x: c[:x], y: r[:y] + (iy * (cell_h + gap)),
                    w: c[:w], h: cell_h }
-          border cell.merge(color: color)
+          # Cells are derived from an already-resolved rect.
+          emit_border cell, color, nil
           out << cell
         end
       end
@@ -333,8 +349,23 @@ module Console
 
     private
 
-    def absolute(r)
-      { x: r[:x], y: r[:y], w: r[:w], h: r[:h] }
+    # Emit a rect that has ALREADY been resolved (and therefore already has the
+    # camera applied). Primitives that consume another primitive's resolved
+    # output must use these instead of rect/border, which resolve -- and so
+    # transform -- a second time.
+    def emit_rect(r, color, alpha)
+      outputs.sprites << r.merge(Palette.to_hash(color, alpha)).merge(path: :solid)
+      r
+    end
+
+    def emit_border(r, color, alpha = nil, thickness = 1)
+      thickness.times do |i|
+        outputs.borders << { x: r[:x] + i,
+                             y: r[:y] + i,
+                             w: r[:w] - (i * 2),
+                             h: r[:h] - (i * 2) }.merge(Palette.to_hash(color, alpha))
+      end
+      r
     end
 
     def strip_color(spec)
@@ -345,6 +376,12 @@ module Console
 
     def natural_size(path, w, h)
       return [w, h] if w && h
+      # Generated textures are not files, so get_sprite_rect cannot measure
+      # them; without this a procedural sprite drawn without w/h was 0x0.
+      if path.is_a?(Symbol) && Sprites.generated?(path)
+        nw, nh = Sprites.size(path, @args)
+        return [w || nw, h || nh]
+      end
       begin
         natural = DR.get_sprite_rect path
         return [w, natural.h] if w && natural.h

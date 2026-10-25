@@ -70,16 +70,15 @@ module Console
     # --- sfx --------------------------------------------------------------
 
     # Play a one-shot. gain and pitch are floats (DragonRuby warns otherwise).
+    # The master gain (set by music_gain) scales every sfx, given a gain or not.
     def sfx(name, options = {})
       return nil if @muted
       path = resolve name
       return nil unless path
-      prim = { path: path }
-      gain = options[:gain]
+      prim = { path: path,
+               gain: (options[:gain] || 1.0).to_f * @master_gain }
       pitch = options[:pitch]
-      prim[:gain] = (gain.to_f * @master_gain) if gain
       prim[:pitch] = pitch.to_f if pitch
-      prim[:looped] = false if options[:loop]
       @args.outputs.sounds << prim
       prim
     end
@@ -106,6 +105,7 @@ module Console
       @args.audio[MUSIC_KEY] = entry
       @current_music = entry
       @current_music_name = name
+      @track_gain = (options[:gain] || 1.0).to_f
       entry
     end
 
@@ -124,24 +124,24 @@ module Console
       !@current_music_name.nil?
     end
 
+    # Master volume, 0.0..1.0. Scales the playing track in place (it keeps
+    # playing from where it was) and every later sfx and track.
     def music_gain(value)
-      return @current_music[:gain] if value.nil? && @current_music
-      return nil if value.nil?
-      @args.audio[MUSIC_KEY] = nil if @current_music
+      if value.nil?
+        return @current_music ? @current_music[:gain] : nil
+      end
       @master_gain = value.to_f
-      music @current_music_name, gain: value if @current_music_name
+      apply_track_gain
       @master_gain
     end
 
-    # Volume of the currently playing track only.
+    # Volume of the currently playing track only, before the master gain.
     def track_gain(value)
       return nil unless @current_music
-      return @current_music[:gain] if value.nil?
-      @args.audio[MUSIC_KEY] = { input: @current_music[:input],
-                                  looping: true,
-                                  gain: value.to_f,
-                                  pitch: @current_music[:pitch] }
-      value.to_f
+      return @track_gain if value.nil?
+      @track_gain = value.to_f
+      apply_track_gain
+      @track_gain
     end
 
     # --- global -----------------------------------------------------------
@@ -170,6 +170,17 @@ module Console
     # Stop everything this console owns, leaving other audio alone.
     def stop_all
       stop_music
+    end
+
+    private
+
+    # DragonRuby reads args.audio entries every frame, so changing :gain on the
+    # live entry adjusts the volume without restarting the track.
+    def apply_track_gain
+      return unless @current_music
+      @current_music[:gain] = (@track_gain || 1.0) * @master_gain
+      live = @args.audio[MUSIC_KEY]
+      live[:gain] = @current_music[:gain] if live && !live.equal?(@current_music)
     end
   end
 end

@@ -34,7 +34,16 @@ set "LOG=%TEMP%\run-test.log"
 if not exist "%TEMP%" set "LOG=%CD%\run-test.log"
 if exist "%LOG%" del /q "%LOG%"
 
+rem  dragonruby.exe is a GUI program on Windows, so its stdout is not inherited
+rem  and the redirect below captures nothing. The engine mirrors the same
+rem  output into ..\logs\console.log; that is cleared first (so a stale log can
+rem  never report a pass) and read when the redirect came back empty.
+set "DRLOG=%CD%\..\logs\console.log"
+if exist "%DRLOG%" del /q "%DRLOG%" >nul 2>&1
+
 "%DRAGONRUBY%" "%GAMEDIR%" --selftest %* >"%LOG%" 2>&1
+
+for %%A in ("%LOG%") do if %%~zA==0 if exist "%DRLOG%" type "%DRLOG%" >"%LOG%"
 
 type "%LOG%"
 

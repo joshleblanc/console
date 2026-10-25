@@ -9,9 +9,8 @@
 #
 #   def update
 #     body.vx = input.axis_x * 4
-#     body.vy += body.gravity
 #     body.jump 12 if input.pressed?(:accept) && body.grounded?
-#     body.update map.solids
+#     body.update map.solids          # applies gravity itself
 #   end
 #
 #   def render
@@ -165,6 +164,7 @@ module Console
       @on_floor = nil
       @on_roof = nil
       @blocked_rect = nil
+      y_before = @y
 
       # Gravity is a positive magnitude that pulls DOWN. DragonRuby's origin is
       # bottom-left, so falling is a DECREASING y and therefore a negative vy.
@@ -204,8 +204,11 @@ module Console
       @vy = 0.0 if blocked_y
 
       @landed_this_frame = @grounded && !@was_grounded
-      @fell = 0.0 if @grounded
-      @fell += @gravity unless @grounded
+      if @grounded
+        @fell = 0.0
+      elsif @y < y_before
+        @fell += y_before - @y
+      end
 
       sync_entity
       self
@@ -220,13 +223,15 @@ module Console
       steps = (distance / MAX_STEP).ceil
       steps = 1 if steps < 1
       step = delta / steps
+      dir = delta > 0 ? 1 : -1
 
       blocked = false
       steps.times do
+        @step_from_y = @y
         @x += step if axis == :x
         @y += step if axis == :y
 
-        hit = resolve axis, solids
+        hit = resolve axis, solids, dir
         next unless hit
 
         blocked = true
@@ -237,12 +242,16 @@ module Console
     end
 
     # Push the body back out of anything it overlaps, along `axis` only.
+    # `dir` is the sign of the motion being resolved. It is passed in rather
+    # than read from vx/vy because resolving a wall zeroes vx, and the step-up
+    # retry then moves again with vx already 0.
     #
     # Resolving one axis at a time is what produces wall sliding: a horizontal
     # block clears vx but leaves vy untouched, so gravity keeps working and the
     # body slides down the wall rather than sticking to it.
-    def resolve(axis, solids)
+    def resolve(axis, solids, dir = nil)
       return nil if solids.nil? || solids.size == 0
+      dir ||= (axis == :x ? (@vx > 0 ? 1 : -1) : (@vy > 0 ? 1 : -1))
 
       r = rect
       hit = nil
@@ -259,7 +268,7 @@ module Console
 
         case axis
         when :x
-          if @vx > 0
+          if dir > 0
             @x = s[:x] - @w
             @wall_dir = :right
           else
@@ -272,7 +281,7 @@ module Console
           @vx = 0.0
           @wall = true
         when :y
-          if @vy <= 0
+          if dir < 0
             # Falling (or resting): the body lands on top.
             @y = s[:y] + s[:h]
             @grounded = true
@@ -314,21 +323,22 @@ module Console
       need
     end
 
-# True when a solid should be IGNORED for this move.
+    # True when a solid should be IGNORED for this move.
     #
-    # A one-way platform is solid only from above and only while descending.
-    # Both halves matter: without the first, a body rising through a platform
-    # is stopped by it; without the second, a body standing on a platform can
-    # never jump back up through it.
+    # A one-way platform is solid only from above: it never blocks sideways
+    # motion, never blocks a rising body, and only catches a falling body whose
+    # feet were at or above its top before this step. Without the last rule a
+    # body that peaked inside a platform was popped up onto it.
     def one_way_ignores?(axis, solid)
       return false unless solid[:one_way]
-      return false unless axis == :y
+      return true unless axis == :y
 
       # Rising: pass straight up through it.
       return true if @vy > 0
 
-      # Already sunk below it: there is nothing left to stand on.
-      return true if (@y + @h) <= solid[:y] + SKIN
+      # Feet were already below the top: there is nothing to land on.
+      from = @step_from_y || @y
+      return true if from < solid[:y] + solid[:h] - SKIN
 
       false
     end
