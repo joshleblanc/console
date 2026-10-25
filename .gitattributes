@@ -9,6 +9,7 @@ run text eol=lf
 run-test text eol=lf
 smoke text eol=lf
 publish-cart text eol=lf
+new-cart text eol=lf
 
 *.rb text eol=lf
 *.md text eol=lf

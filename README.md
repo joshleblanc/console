@@ -65,7 +65,13 @@ Any directory inside the console works — `games/space`, `demos/space`,
 ```
 
 `carts/` is looked at first, so a cart of yours shadows a sample of the same
-name. Copy a sample to start from it rather than editing it where it lives:
+name. Scaffold a new cart from the template:
+
+```sh
+./bin/new-cart mygame
+```
+
+...or copy a sample to start from it rather than editing it where it lives:
 
 ```sh
 cp -R samples/hello carts/hello
@@ -225,6 +231,7 @@ Every shell script has a batch equivalent beside it, doing the same thing:
 | `./bin/run [cart]` | `bin\run.bat [cart]` |
 | `./bin/run-test` | `bin\run-test.bat` |
 | `./bin/smoke [n]` | `bin\smoke.bat [n]` |
+| `./bin/new-cart <name>` | `bin\new-cart.bat <name>` |
 | `./bin/publish-cart` | `bin\publish-cart.bat` |
 | `./bin/update-library` | `bin\update-library.bat` |
 | `./bin/publish-site` | `bin\publish-site.bat` |
@@ -240,6 +247,8 @@ run.bat --list                      list the gallery
 run-test.bat                        the self test, non-zero on failure
 smoke.bat                           boot every cart headlessly
 smoke.bat 600                       ...for 600 frames each
+
+new-cart.bat mygame                 scaffold a new cart
 
 publish-cart.bat --list             list publishable carts
 publish-cart.bat arcade             package arcade for windows-amd64
@@ -410,6 +419,7 @@ console/
 │   ├── run                  boot a cart
 │   ├── run-test             the self test
 │   ├── smoke                boot every cart headlessly
+│   ├── new-cart             scaffold a new cart
 │   ├── publish-cart         package exactly one cart for desktop
 │   ├── publish-site         send a cart to a Dragonstation site
 │   ├── publish-console      release a new console version (admin)

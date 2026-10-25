@@ -1,0 +1,91 @@
+#!/bin/sh
+# Scaffold a new cart: create carts/<name>/ with an app/main.rb skeleton and
+# the asset directories the console looks for.
+#
+#   ./new-cart <name>
+#
+# The name becomes the cart directory and -- run through the same camel-case
+# rule Console::Str.camel applies -- the class the entry file defines, so it
+# must be a bare directory name: letters, digits, '-' and '_', starting with
+# a letter.
+#
+# Exits non-zero when the name is invalid or carts/<name> already exists.
+cd "$(dirname "$0")/.."
+
+die() { echo "new-cart: $*" >&2; exit 1; }
+
+usage() {
+  echo "usage: new-cart <name>"
+  echo ""
+  echo "  creates carts/<name>/ with an app/main.rb skeleton and empty"
+  echo "  sprites/, sounds/, maps/ and data/ directories."
+}
+
+case "$1" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+[ $# -eq 0 ] && { usage >&2; exit 1; }
+[ $# -gt 1 ] && die "expected exactly one name (usage: new-cart <name>)"
+
+NAME=$1
+
+printf '%s' "$NAME" | grep -Eq '^[A-Za-z][A-Za-z0-9_-]*$' \
+  || die "'$NAME' is not a valid cart name (letters, digits, '-' and '_', starting with a letter)"
+
+[ -e "carts/$NAME" ] && die "carts/$NAME already exists"
+
+if [ -e "samples/$NAME" ]; then
+  echo "new-cart: warning: carts/$NAME will shadow the '$NAME' sample in the gallery" >&2
+fi
+
+# The class the loader expects is Console::Str.camel(name): split on '-' and
+# '_', uppercase the first character of each part, join. app/console/str.rb.
+CLASS=$(printf '%s' "$NAME" | awk 'BEGIN { FS = "[-_]" } {
+  for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2)
+}')
+
+mkdir -p "carts/$NAME/app" "carts/$NAME/sprites" "carts/$NAME/sounds" \
+         "carts/$NAME/maps" "carts/$NAME/data" \
+  || die "could not create carts/$NAME"
+
+cat > "carts/$NAME/app/main.rb" <<EOF
+# Cart: $NAME
+#
+#   ./bin/run $NAME
+#
+# See "The cart contract" in the console README. Every hook is optional.
+TITLE = '$NAME'
+
+class $CLASS
+  # Optional: short names for assets. Anything under this cart's own sprites/
+  # is already reachable by name without this.
+  def self.assets
+    {}
+  end
+
+  # Called once, when the console boots.
+  def setup
+  end
+
+  # Called every frame, unless the cart registers scenes.
+  def update
+  end
+
+  # Called every frame, always last.
+  def render
+    draw.text TITLE, place: { x: 0.5, y: 0.5, anchor_x: 0.5, anchor_y: 0.5 },
+              size_px: 40, color: :accent
+  end
+end
+EOF
+
+echo "created carts/$NAME"
+echo "  carts/$NAME/app/main.rb"
+echo "  carts/$NAME/sprites/"
+echo "  carts/$NAME/sounds/"
+echo "  carts/$NAME/maps/"
+echo "  carts/$NAME/data/"
+echo ""
+echo "next: ./bin/run $NAME"
+exit 0
