@@ -201,6 +201,7 @@ module Console
       blocked_y = move_axis :y, @vy, @solids
 
       @vx *= @friction
+      @vy *= @friction
       @vy = 0.0 if blocked_y
 
       @landed_this_frame = @grounded && !@was_grounded
