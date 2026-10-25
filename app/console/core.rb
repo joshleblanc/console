@@ -108,6 +108,11 @@ module Console
   #       music:   { title: 'sounds/title.ogg' } }
   #   end
   #
+  # A sprite can also be one tile inside a sheet:
+  #
+  #   { sprites: { hero: { sheet: 'sprites/hero.png', index: 3,
+  #                         tile_w: 16, tile_h: 16, cols: 8 } } }
+  #
   # Every path is relative to the cart's own directory, so the example above is
   # 'carts/space/sprites/hero.png' for a cart at carts/space -- see
   # Console::Assets. Nothing here needs the cart's name to be hardcoded.
@@ -121,7 +126,7 @@ module Console
     owner = @cart.respond_to?(:assets) ? @cart : @cart.class
     if owner.respond_to?(:assets)
       assets = owner.assets || {}
-      assets[:sprites]&.each { |name, path| Sprites.register name, path }
+      assets[:sprites]&.each { |name, decl| Sprites.register_declared name, decl }
       assets[:sounds]&.each { |name, path| audio.register name, path }
       assets[:music]&.each { |name, path| audio.register "music_#{name}", path }
     end
@@ -322,7 +327,10 @@ module Console
   end
 
   # Resolve or synthesise a sprite, so a cart can run before art exists.
-  def self.auto_sprite(name, w = 16, h = 16, color = :accent, pattern = :solid)
+  #
+  # w/h are optional: a name that is a tile in a sheet takes the size of its
+  # tile, and everything else takes the default 16x16.
+  def self.auto_sprite(name, w = nil, h = nil, color = :accent, pattern = :solid)
     Sprites.auto args, name, w, h, color, pattern
   end
 
@@ -650,13 +658,18 @@ module Console
     end
 
     # Resolve a sprite name, generating a placeholder texture if needed.
-    def auto_sprite(name, w = 16, h = 16, color = :accent, pattern = :solid)
+    def auto_sprite(name, w = nil, h = nil, color = :accent, pattern = :solid)
       Console.auto_sprite name, w, h, color, pattern
     end
 
     # Draw a sprite in one call.
+    #
+    # The name is handed to the draw layer rather than resolved here, so a
+    # name that is a tile in a sheet draws that tile.
     def draw_sprite(name, options = {})
-      Console.draw.sprite options.merge(path: Console.sprite(name))
+      resolved = Console.sprite name
+      path = name.is_a?(Symbol) ? name : resolved
+      Console.draw.sprite options.merge(path: path)
     end
 
     # The screen background colour. Call once per frame if it changes.

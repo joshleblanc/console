@@ -26,6 +26,7 @@ module Console
 
     @registry = {}
     @generated = {}
+    @crops = {}
     @missing = []
     @indexed = false
 
@@ -38,6 +39,7 @@ module Console
     # is what makes "first one wins" true.
     def index!
       @registry = {}
+      @crops = {}
       @indexed = false
       walk "#{Assets.root}/#{ROOT}", '' if Assets.scoped?
       walk ROOT, ''
@@ -74,6 +76,69 @@ module Console
     # 'sprites/hero/idle/0.png'` inside a cart means that cart's file.
     def register(name, path)
       @registry[name.to_s] = Assets.resolve path
+    end
+
+    # Register a sprite that is ONE TILE inside a sheet.
+    #
+    #   register_sheet :hero, 'sprites/hero.png',
+    #                  tile_x: 48, tile_y: 0, tile_w: 16, tile_h: 16
+    #
+    # The name still resolves to the sheet, but the crop travels with the NAME,
+    # so every draw of :hero draws that tile and nothing else. See
+    # `register_declared` for the cart-facing form.
+    def register_sheet(name, path, crop)
+      register name, path
+      @crops[name.to_s] = crop if crop
+      name
+    end
+
+    # The crop registered for a name, or nil.
+    def crop(name)
+      return nil if name.nil?
+      @crops[name.to_s]
+    end
+
+    # Register a DECLARED sprite. The declaration is either a plain path or a
+    # hash describing a tile inside a sheet:
+    #
+    #   register_declared :crate, 'sprites/crate.png'
+    #   register_declared :hero, { sheet: 'sprites/hero.png', index: 3,
+    #                             tile_w: 16, tile_h: 16, cols: 8 }
+    #   register_declared :hero, { sheet: 'sprites/hero.png',
+    #                             tile_x: 48, tile_y: 0,
+    #                             tile_w: 16, tile_h: 16 }
+    def register_declared(name, decl)
+      if decl.is_a?(Hash)
+        sheet = decl[:sheet] || decl[:path]
+        register_sheet name, sheet, sheet_crop(decl)
+      else
+        register name, decl
+      end
+    end
+
+    # Build a tile crop from a sheet declaration.
+    #
+    # A grid declaration is numbered from the TOP LEFT, the way a tileset is
+    # drawn, so tile 0 is the top-left tile. That matches DragonRuby's tile_*
+    # crop, whose origin is top-left.
+    def sheet_crop(decl)
+      return nil unless decl.is_a?(Hash)
+      tw = decl[:tile_w] || 16
+      th = decl[:tile_h] || tw
+      if decl[:index]
+        cols = decl[:cols] || 1
+        cols = 1 if cols < 1
+        i = decl[:index]
+        { tile_x: (i % cols) * tw,
+          tile_y: ((i / cols).to_i) * th,
+          tile_w: tw,
+          tile_h: th }
+      elsif decl[:tile_x] || decl[:tile_y]
+        { tile_x: decl[:tile_x] || 0,
+          tile_y: decl[:tile_y] || 0,
+          tile_w: tw,
+          tile_h: th }
+      end
     end
 
     # --- resolution -------------------------------------------------------
@@ -129,6 +194,9 @@ module Console
     # get_sprite_rect only understands file paths, so generated textures are
     # measured from the pixel array itself.
     def size(name, args = nil)
+      # A tile in a sheet is as big as the tile, not as big as the sheet.
+      c = crop(name)
+      return [c[:tile_w], c[:tile_h]] if c
       p = path(name)
       if p.is_a?(Symbol) && generated?(p)
         pa = (args || $args).pixel_array(p)
@@ -183,12 +251,30 @@ module Console
 
     # Create (or fetch) a procedural texture. `auto` is the forgiving version:
     # it never overwrites a real file on disk.
-    def auto(args, name, w = 16, h = 16, color = :accent, pattern = :solid)
+    #
+    # A name that is a TILE in a sheet is the interesting case:
+    #
+    #   - the sheet exists: the sheet is returned and the crop is kept, so
+    #     drawing the name draws that tile out of the real art;
+    #   - the sheet is missing: a placeholder the size of the tile is
+    #     generated, and the crop is dropped, because the placeholder IS the
+    #     tile and cropping it again would cut it to nothing.
+    def auto(args, name, w = nil, h = nil, color = :accent, pattern = :solid)
       key = name.to_s
       return key.to_sym if @generated[key]
+
+      c = @crops[key]
+      if c
+        sheet = @registry[key]
+        return sheet if sheet && DR.stat_file(sheet)
+        @crops.delete key
+        tw = w || c[:tile_w] || 16
+        th = h || c[:tile_h] || tw
+        return generate(args, key, tw, th, color, pattern)
+      end
+
       return @registry[key] if @registry[key]
-      generate args, key, w, h, color, pattern
-      key.to_sym
+      generate(args, key, w || 16, h || 16, color, pattern)
     end
 
     # Force-generate a texture, even if a file exists.

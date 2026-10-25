@@ -463,6 +463,38 @@ class Mygame
 end
 ```
 
+### Declaring a sprite that is a tile in a sheet
+
+A sprite declaration can also name **one tile inside a sheet**. The crop travels
+with the name, so everything that draws `:hero` draws that tile — `draw_sprite`,
+`draw.sprite`, and entities spawned with `sprite: :hero`:
+
+```ruby
+def self.assets
+  { sprites: {
+      # A grid: tiles are numbered left to right, top to bottom, and tile 0 is
+      # the TOP-LEFT tile -- the way a tileset is drawn.
+      hero: { sheet: 'sprites/hero.png', index: 3,
+              tile_w: 16, tile_h: 16, cols: 8 },
+
+      # Or an explicit rectangle in the sheet, if the sheet is not a grid.
+      crate: { sheet: 'sprites/props.png',
+               tile_x: 48, tile_y: 0, tile_w: 16, tile_h: 16 } } }
+end
+```
+
+`auto_sprite` knows a declared tile is a tile:
+
+- **the sheet exists** — the real art is used, cropped to the tile;
+- **the sheet is missing** — a placeholder the size of the *tile* is generated,
+  so the cart still runs, and the art is still one tile big when it arrives.
+
+```ruby
+def setup
+  auto_sprite :hero          # the tile, cropped, or a tile-sized placeholder
+end
+```
+
 ### Paths are cart-relative
 
 Every path a cart writes is relative to **its own directory**:
@@ -567,6 +599,26 @@ draw.bar    { x: 0, y: 0, w: 100, h: 10 }, 5, 10
 
 Every method returns the rect it drew, so calls compose and can be hit-tested
 without recomputing geometry.
+
+**Sprite sheets.** Three helpers crop one tile out of a sheet, and each draws
+it at the tile's own size unless `w:`/`h:` say otherwise:
+
+```ruby
+# A grid-packed sheet, addressed by tile index (left to right, top to bottom).
+draw.sprite_tile path: 'tiles.png', index: 7,
+                 tile_w: 16, tile_h: 16, cols: 8
+
+# A horizontal strip, addressed by frame index.
+draw.sprite_sheet_frame path: 'explosion.png', frame_w: 32, frame_h: 32,
+                         frame_index: 1
+
+# Any crop, by absolute source coordinates (bottom-left origin).
+draw.sprite_frame path: 'tiles.png', source: { x: 32, y: 0, w: 16, h: 16 }
+```
+
+`source:` crops use DragonRuby's bottom-left origin, like every other
+coordinate in the console. `sprite_tile` reads the grid from the *top* left,
+the way a tileset is drawn, because that is how tile 0 is numbered.
 
 **Two coordinate systems.** Top-level `x:`/`y:` are absolute pixels, with `y:`
 measured from the *bottom* (DragonRuby's origin). `place:` positions and sizes
@@ -712,6 +764,13 @@ auto_sprite :crate, 24, 24, :warn, :frame  # generate it if there is no file
 `auto_sprite` is the reason a cart is playable on day one. Patterns: `:solid`,
 `:checker`, `:stripes`, `:frame`, `:circle`, `:ring`. Generated textures are real
 textures, addressable by symbol.
+
+`auto_sprite` makes a whole texture: it has no sheet or tile selector, and it
+never overwrites a real file. A name that is *declared* as a tile in a sheet is
+the exception — see
+[Declaring a sprite that is a tile in a sheet](#declaring-a-sprite-that-is-a-tile-in-a-sheet).
+To pull a tile out of a sheet at draw time instead, use `draw.sprite_tile` or
+`draw.sprite_sheet_frame` — see [Drawing](#drawing).
 
 Names come from the booted cart's own `sprites/` tree (indexed recursively at
 boot, so `sprites/misc/star.png` is reachable as `:'misc/star'` and
@@ -930,7 +989,7 @@ rather than editing it where it lives.
 ./bin/run-test
 ```
 
-192 tests / 1539 assertions, executed **inside the real DragonRuby runtime** —
+248 tests / 1677 assertions, executed **inside the real DragonRuby runtime** —
 against the real renderer, the real output collections and the real mruby build,
 not a stand-in. The suite covers geometry, strings, palettes, asset scoping and
 cart isolation, the sprite index and procedural generation, drawing and
@@ -941,7 +1000,7 @@ and the runtime wiring.
 It prints a machine-readable summary:
 
 ```
-CONSOLE_TEST_STATUS=PASS TESTS=192 ASSERTIONS=1539 FAILURES=0
+CONSOLE_TEST_STATUS=PASS TESTS=248 ASSERTIONS=1677 FAILURES=0
 ```
 
 `./bin/smoke` additionally boots every cart headlessly and fails if any raises.

@@ -171,15 +171,22 @@ module Console
     # which is what you want for pixel-art.
     def sprite(spec = {})
       path = spec[:path]
+      crop = nil
       # A Symbol that is not a generated texture is a sprite *name*; resolve it
       # so carts can write draw.sprite path: :hero without ceremony.
       if path.is_a?(Symbol)
-        path = Sprites.path(path) unless Sprites.generated?(path)
+        unless Sprites.generated?(path)
+          # A name that is a tile in a sheet carries its crop with it, so
+          # drawing the name draws that tile and not the whole sheet.
+          crop = Sprites.crop path
+          path = Sprites.path path
+        end
       elsif path.is_a?(String)
         # A path written by hand is cart-relative, exactly as it is everywhere
         # else in the API.
         path = Assets.resolve path
       end
+      spec = apply_crop spec, crop
       color = spec[:color]
       alpha = spec[:alpha]
       natural = natural_size(path, spec[:w], spec[:h])
@@ -195,21 +202,62 @@ module Console
     end
 
     # Draw a crop of a sprite sheet by absolute source coordinates.
+    #
+    #   draw.sprite_frame path: 'sheet.png', x: 0, y: 0,
+    #                           source: { x: 32, y: 0, w: 32, h: 32 }
+    #
+    # `source:` uses DragonRuby's bottom-left origin, like every other
+    # coordinate in the console. The crop is drawn at its own size unless w:/h:
+    # say otherwise -- otherwise the tile would be stretched across the whole
+    # sheet, because the destination size would default to the sheet's.
     def sprite_frame(spec = {})
       src = spec[:source] || {}
-      sprite(spec.merge(source_x: src[:x], source_y: src[:y],
-                        source_w: src[:w], source_h: src[:h]))
+      s = spec.merge(source_x: src[:x], source_y: src[:y],
+                     source_w: src[:w], source_h: src[:h])
+      s[:w] = src[:w] if s[:w].nil? && src[:w]
+      s[:h] = src[:h] if s[:h].nil? && src[:h]
+      sprite s
     end
 
     # Draw frame `index` of a horizontally laid out sheet.
+    #
+    #   draw.sprite_sheet_frame path: 'sheet.png', frame_w: 32, frame_h: 32,
+    #                                frame_index: 1
     def sprite_sheet_frame(spec = {})
       fw = spec[:frame_w]
       fh = spec[:frame_h]
       i = spec[:frame_index] || 0
-      sprite(spec.merge(source_x: i * fw,
-                        source_y: 0,
-                        source_w: fw,
-                        source_h: fh))
+      s = spec.merge(source_x: i * fw,
+                     source_y: 0,
+                     source_w: fw,
+                     source_h: fh)
+      s[:w] = fw if s[:w].nil?
+      s[:h] = fh if s[:h].nil?
+      sprite s
+    end
+
+    # Draw one tile out of a grid-packed sheet, addressed by index.
+    #
+    #   draw.sprite_tile path: 'tiles.png', index: 7,
+    #                         tile_w: 16, tile_h: 16, cols: 8
+    #
+    # Tiles are numbered left to right, top to bottom, and the grid is read
+    # from the TOP LEFT -- the way a tileset is drawn, so index 0 is the
+    # top-left tile. That is DragonRuby's tile_* crop, whose origin is
+    # top-left, rather than the source_* crop used by the frame helpers.
+    def sprite_tile(spec = {})
+      tw = spec[:tile_w] || 16
+      th = spec[:tile_h] || tw
+      cols = spec[:cols] || 1
+      cols = 1 if cols < 1
+      i = spec[:index] || 0
+      col = (i % cols).to_i
+      row = (i / cols).to_i
+      s = spec.merge(tile_x: col * tw, tile_y: row * th,
+                     tile_w: tw, tile_h: th)
+      s[:w] = tw if s[:w].nil?
+      s[:h] = th if s[:h].nil?
+      sprite s
     end
 
     # Text. Returns the visual rect the text occupies, positioned in screen
@@ -372,6 +420,19 @@ module Console
       out = {}
       spec.each { |k, v| out[k] = v unless k == :color || k == :alpha }
       out
+    end
+
+    # Fold a registered tile crop into a spec.
+    #
+    # The crop travels with the sprite NAME, so every draw of the name draws
+    # that tile. The caller's own keys win, so a draw can still override the
+    # tile, and a size the caller gave is never replaced by the tile's.
+    def apply_crop(spec, crop)
+      return spec if crop.nil?
+      s = crop.merge(spec)
+      s[:w] = crop[:tile_w] if s[:w].nil? && crop[:tile_w]
+      s[:h] = crop[:tile_h] if s[:h].nil? && crop[:tile_h]
+      s
     end
 
     def natural_size(path, w, h)

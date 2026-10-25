@@ -44,6 +44,7 @@ module Console
       @frame_w = spec[:frame_w]
       @frame_h = spec[:frame_h]
       @frames = spec[:frames]
+      @crop = spec[:crop]
       @speed = spec[:speed] || 1.0
     end
 
@@ -96,7 +97,10 @@ module Console
           source_w: @frame_w,
           source_h: @frame_h }
       else
-        { path: @frames[i] || @frames[0] }
+        p = { path: @frames[i] || @frames[0] }
+        # A static fallback to a name that is a tile in a sheet keeps the crop.
+        p.merge!(@crop) if @crop
+        p
       end
     end
   end
@@ -253,11 +257,13 @@ module Console
         paths = Sprites.frames group
         if paths.size == 0
           # No frames on disk: fall back to whatever the state name resolves to
-          # as a single static sprite, so states still work without art.
+          # as a single static sprite, so states still work without art. When
+          # that name is a tile in a sheet, the crop comes with it.
           static = Sprites.path(name)
           return nil if static == :solid && !Sprites.exists?(name)
           return { name: name, kind: :sequence, frames: [static],
-                   frame_count: 1, repeat: false }.merge(opts)
+                   frame_count: 1, repeat: false,
+                   crop: Sprites.crop(name) }.merge(opts)
         end
         opts[:kind] = :sequence
         opts[:frames] = paths

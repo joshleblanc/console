@@ -450,6 +450,186 @@ class SpritesSuite
   end
 end
 
+# A sprite can be declared as one tile inside a sheet. The crop travels with
+# the NAME, so everything that draws the name draws that tile -- and
+# auto_sprite knows the tile is a tile, so the placeholder it generates is one
+# tile big instead of a whole sheet.
+class SheetSuite
+  include Console::Test
+
+  def outputs
+    $args.outputs
+  end
+
+  def reset
+    outputs.sprites.clear
+  end
+
+  # Declare a sheet sprite, run the block, then put the sprite index back the
+  # way boot found it -- index, then the cart's own declarations.
+  def with_sheet(name, decl)
+    Console::Sprites.register_declared name, decl
+    yield
+  ensure
+    Console::Sprites.index!
+    Console.register_cart_assets
+  end
+
+  test 'a cart can declare a sheet tile and the console registers it' do
+    # The selftest cart declares the tile in its own `self.assets`; this is the
+    # routine the console runs at boot to read a cart's declarations.
+    Console.register_cart_assets
+    crop = Console::Sprites.crop :selftest_tile
+    assert_not_nil crop, 'the cart\'s declared sheet tile should be registered'
+    assert_equal 32, crop[:tile_x]
+    assert_equal 16, crop[:tile_y]
+    assert_equal 16, crop[:tile_w]
+    assert_equal 16, crop[:tile_h]
+    # The sheet itself is the cart's own file.
+    assert_equal "#{SELFTEST_CART}/sprites/blue.png",
+                 Console::Sprites.path(:selftest_tile)
+  end
+
+  test 'a grid declaration puts the tile crop on the name' do
+    with_sheet :hero, { sheet: 'sprites/blue.png', index: 7,
+                        tile_w: 16, tile_h: 16, cols: 5 } do
+      crop = Console::Sprites.crop :hero
+      assert_equal 32, crop[:tile_x]
+      assert_equal 16, crop[:tile_y]
+      assert_equal 16, crop[:tile_w]
+      assert_equal 16, crop[:tile_h]
+    end
+  end
+
+  test 'an explicit tile offset declaration is honoured' do
+    with_sheet :hero, { sheet: 'sprites/blue.png', tile_x: 48, tile_y: 16,
+                        tile_w: 16, tile_h: 16 } do
+      crop = Console::Sprites.crop :hero
+      assert_equal 48, crop[:tile_x]
+      assert_equal 16, crop[:tile_y]
+    end
+  end
+
+  test 'a grid is numbered from the top row, the way a tileset is drawn' do
+    with_sheet :hero, { sheet: 'sprites/blue.png', index: 5,
+                        tile_w: 16, tile_h: 16, cols: 5 } do
+      crop = Console::Sprites.crop :hero
+      assert_equal 0, crop[:tile_x]
+      assert_equal 16, crop[:tile_y]
+    end
+  end
+
+  test 'a plain path declaration is not a tile' do
+    with_sheet :crate, 'sprites/blue.png' do
+      assert_nil Console::Sprites.crop(:crate)
+      assert_equal "#{SELFTEST_CART}/sprites/blue.png",
+                   Console::Sprites.path(:crate)
+    end
+  end
+
+  test 'drawing a declared tile crops the sheet and sizes the draw' do
+    reset
+    with_sheet :hero, { sheet: 'sprites/blue.png', index: 7,
+                        tile_w: 16, tile_h: 16, cols: 5 } do
+      Console.draw.sprite path: :hero, x: 0, y: 0
+      prim = outputs.sprites.last
+      assert_equal 32, prim[:tile_x]
+      assert_equal 16, prim[:tile_y]
+      assert_equal 16, prim[:tile_w]
+      assert_equal 16, prim[:tile_h]
+      # The tile is 16x16, not the 80x80 sheet it lives in.
+      assert_equal 16, prim[:w]
+      assert_equal 16, prim[:h]
+      assert_equal "#{SELFTEST_CART}/sprites/blue.png", prim[:path]
+    end
+  end
+
+  test 'an explicit size still wins over the tile size' do
+    reset
+    with_sheet :hero, { sheet: 'sprites/blue.png', index: 7,
+                        tile_w: 16, tile_h: 16, cols: 5 } do
+      Console.draw.sprite path: :hero, x: 0, y: 0, w: 64, h: 64
+      prim = outputs.sprites.last
+      assert_equal 64, prim[:w]
+      assert_equal 64, prim[:h]
+    end
+  end
+
+  test 'auto_sprite keeps the sheet and its crop when the art exists' do
+    with_sheet :hero, { sheet: 'sprites/blue.png', index: 7,
+                        tile_w: 16, tile_h: 16, cols: 5 } do
+      result = Console.auto_sprite :hero
+      assert_equal "#{SELFTEST_CART}/sprites/blue.png", result
+      # The crop survives, so drawing the name still draws the tile.
+      assert_equal 32, Console::Sprites.crop(:hero)[:tile_x]
+    end
+  end
+
+  test 'auto_sprite generates a tile-sized placeholder when the sheet is missing' do
+    with_sheet :ghost, { sheet: 'sprites/not_here.png', index: 2,
+                         tile_w: 24, tile_h: 24, cols: 4 } do
+      result = Console.auto_sprite :ghost
+      assert result.is_a?(Symbol), 'a missing sheet should generate a texture'
+      # One tile big -- the tile's size, not the 16x16 default.
+      size = Console::Sprites.size :ghost
+      assert_equal 24, size[0]
+      assert_equal 24, size[1]
+      # The placeholder IS the tile, so the crop is dropped.
+      assert_nil Console::Sprites.crop(:ghost)
+    end
+  end
+
+  test 'an explicit size overrides the tile size of a missing sheet' do
+    with_sheet :ghost2, { sheet: 'sprites/not_here.png', index: 0,
+                          tile_w: 24, tile_h: 24, cols: 4 } do
+      Console.auto_sprite :ghost2, 40, 40
+      size = Console::Sprites.size :ghost2
+      assert_equal 40, size[0]
+      assert_equal 40, size[1]
+    end
+  end
+
+  test 'a generated tile placeholder draws without a crop' do
+    reset
+    with_sheet :ghost, { sheet: 'sprites/not_here.png', index: 2,
+                         tile_w: 16, tile_h: 16, cols: 4 } do
+      Console.auto_sprite :ghost
+      Console.draw.sprite path: :ghost, x: 0, y: 0
+      prim = outputs.sprites.last
+      assert_nil prim[:tile_x]
+      assert_equal 16, prim[:w]
+      assert_equal 16, prim[:h]
+    end
+  end
+
+  test 'an entity with a declared tile draws that tile' do
+    reset
+    Console.entities.clear
+    with_sheet :hero, { sheet: 'sprites/blue.png', index: 7,
+                        tile_w: 16, tile_h: 16, cols: 5 } do
+      entity = Console.entities.spawn nil, x: 0, y: 0, w: 16, h: 16,
+                                            sprite: :hero
+      Console::EntityDraw.draw_entity Console, entity
+      prim = outputs.sprites.last
+      assert_equal 32, prim[:tile_x]
+      assert_equal 16, prim[:tile_y]
+    end
+  end
+
+  test 'the cart-facing draw_sprite draws the declared tile' do
+    reset
+    with_sheet :hero, { sheet: 'sprites/blue.png', index: 7,
+                        tile_w: 16, tile_h: 16, cols: 5 } do
+      api = Object.new
+      api.extend Console::API
+      api.draw_sprite :hero, x: 0, y: 0
+      prim = outputs.sprites.last
+      assert_equal 32, prim[:tile_x]
+      assert_equal 16, prim[:w]
+    end
+  end
+end
+
 class DrawSuite
   include Console::Test
 
@@ -555,6 +735,84 @@ class DrawSuite
     assert_equal "#{SELFTEST_CART}/sprites/star.png", prim[:path]
     assert_equal 16, prim[:w]
     assert_equal 16, prim[:h]
+  end
+
+  test 'sprite_frame crops by absolute source coordinates' do
+    reset
+    Console.draw.sprite_frame path: 'sprites/blue.png', x: 0, y: 0,
+                              source: { x: 32, y: 16, w: 16, h: 16 }
+    prim = outputs.sprites.last
+    assert_equal 32, prim[:source_x]
+    assert_equal 16, prim[:source_y]
+    assert_equal 16, prim[:source_w]
+    assert_equal 16, prim[:source_h]
+  end
+
+  test 'sprite_frame draws the crop at the crop size, not the sheet size' do
+    reset
+    # blue.png is 80x80. With no destination size the crop would be stretched
+    # across the whole sheet, so the crop has to set the size itself.
+    Console.draw.sprite_frame path: 'sprites/blue.png', x: 0, y: 0,
+                              source: { x: 0, y: 0, w: 16, h: 16 }
+    prim = outputs.sprites.last
+    assert_equal 16, prim[:w]
+    assert_equal 16, prim[:h]
+  end
+
+  test 'sprite_frame honours an explicit size' do
+    reset
+    Console.draw.sprite_frame path: 'sprites/blue.png', x: 0, y: 0,
+                              source: { x: 0, y: 0, w: 16, h: 16 },
+                              w: 64, h: 64
+    prim = outputs.sprites.last
+    assert_equal 64, prim[:w]
+    assert_equal 64, prim[:h]
+  end
+
+  test 'sprite_sheet_frame picks a frame out of a horizontal strip' do
+    reset
+    Console.draw.sprite_sheet_frame path: 'sprites/blue.png', x: 0, y: 0,
+                                     frame_w: 16, frame_h: 16, frame_index: 3
+    prim = outputs.sprites.last
+    assert_equal 48, prim[:source_x]
+    assert_equal 0, prim[:source_y]
+    assert_equal 16, prim[:source_w]
+    assert_equal 16, prim[:w]
+    assert_equal 16, prim[:h]
+  end
+
+  test 'sprite_tile addresses a grid tile from the top left' do
+    reset
+    # A 5x5 grid of 16px tiles in an 80x80 sheet; index 7 is row 1, column 2.
+    Console.draw.sprite_tile path: 'sprites/blue.png', x: 0, y: 0,
+                          index: 7, tile_w: 16, tile_h: 16, cols: 5
+    prim = outputs.sprites.last
+    assert_equal 32, prim[:tile_x]
+    assert_equal 16, prim[:tile_y]
+    assert_equal 16, prim[:tile_w]
+    assert_equal 16, prim[:tile_h]
+    assert_equal 16, prim[:w]
+    assert_equal 16, prim[:h]
+  end
+
+  test 'sprite_tile numbers tiles left to right, top to bottom' do
+    reset
+    Console.draw.sprite_tile path: 'sprites/blue.png', index: 4,
+                          tile_w: 16, tile_h: 16, cols: 5
+    prim = outputs.sprites.last
+    assert_equal 64, prim[:tile_x]
+    assert_equal 0, prim[:tile_y]
+  end
+
+  test 'sprite_tile divides into exact rows on a grid wider than one' do
+    reset
+    # mruby's `/` is float division, so index 9 on a 5-wide grid has to land
+    # on row 1 exactly, not row 1.8.
+    Console.draw.sprite_tile path: 'sprites/blue.png', index: 9,
+                          tile_w: 16, tile_h: 16, cols: 5
+    prim = outputs.sprites.last
+    assert_equal 16, prim[:tile_y]
+    assert_equal 64, prim[:tile_x]
   end
 
   test 'text pushes a label and returns the measured rect' do
@@ -1414,6 +1672,15 @@ end
 
 class Selftest
   include Console::Test
+
+  # The cart's own asset declaration, exercised for real: the console reads
+  # this at boot, so the sheet tile declared here is registered before any
+  # test runs.
+  def self.assets
+    { sprites: {
+        selftest_tile: { sheet: 'sprites/blue.png', index: 7,
+                         tile_w: 16, tile_h: 16, cols: 5 } } }
+  end
 
   def self.setup
     Console.show_hud = true
