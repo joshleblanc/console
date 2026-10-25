@@ -1,5 +1,5 @@
-devid=dragonruby
-devtitle=Console
+devid=horizonshadow
+devtitle=Joshua LeBlanc
 gameid=console
 gametitle=Console
 version=1.0
