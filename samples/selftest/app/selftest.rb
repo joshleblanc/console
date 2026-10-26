@@ -1654,7 +1654,8 @@ class RuntimeSuite
                   tween after every sprite auto_sprite debug
                   center overlaps? inside? percent strip row_at
                   ui_store camera background rand_between
-                  asset assets_root shared_assets]
+                  asset assets_root shared_assets
+                  attach_body world_solids]
     missing = required.select { |m| !api.include?(m) }
     assert_equal 0, missing.size, "missing API methods: #{missing.join(', ')}"
   end
@@ -2729,5 +2730,180 @@ class BodySuite
     b.vx = 0.0
     b.resolve :x, [solid(100, 0, 16, 16)], 1
     assert_equal 84.0, b.x
+  end
+end
+
+# ---------------------------------------------------------------------------
+# Bodies integrated with the entity store: `body:` and `solid:` on spawn, and
+# EntityStore#step_bodies, which Console.tick runs once a frame.
+#
+# Each test uses its own store so the live console's world is left alone.
+# ---------------------------------------------------------------------------
+class BodySuite
+  def store_with_floor
+    s = Console::EntityStore.new
+    s.world_solids = floor_solids
+    s
+  end
+
+  test 'spawn with body: attaches a bound body the store steps' do
+    s = store_with_floor
+    e = s.spawn :hero, x: 50, y: 100, w: 16, h: 16, body: { gravity: 1.0 }
+    assert e[:body].is_a?(Console::Body)
+    assert e[:body].entity.equal?(e)
+    100.times { s.step_bodies }
+    assert e[:body].grounded?
+    assert_equal 16.0, e[:y]
+  end
+
+  test 'an entity reaches its body by method access' do
+    s = store_with_floor
+    e = s.spawn :hero, body: true
+    assert e.body.equal?(e[:body])
+  end
+
+  test 'body: true takes Body defaults' do
+    s = store_with_floor
+    e = s.spawn :hero, x: 50, y: 100, body: true
+    assert_equal 0.25, e[:body].gravity
+  end
+
+  test 'a class defaults hash may declare a body' do
+    klass = Class.new do
+      def self.defaults
+        { kind: :faller, body: { gravity: 2.0 } }
+      end
+    end
+    s = store_with_floor
+    a = s.spawn klass, x: 0, y: 100
+    b = s.spawn klass, x: 40, y: 100
+    assert_equal 2.0, a[:body].gravity
+    assert !a[:body].equal?(b[:body]), 'each entity gets its own body'
+  end
+
+  test 'attach_body gives an existing entity a stepped body' do
+    s = store_with_floor
+    e = s.spawn :ship, x: 50, y: 100
+    b = s.attach_body e, gravity: 1.0
+    assert b.equal?(e[:body])
+    100.times { s.step_bodies }
+    assert_equal 16.0, e[:y]
+  end
+
+  test 'solid entities are collision and leave it when despawned' do
+    s = Console::EntityStore.new
+    plank = s.spawn :plank, x: 0, y: 0, w: 200, h: 40, solid: true
+    hero = s.spawn :hero, x: 50, y: 100, w: 16, h: 16, body: { gravity: 1.0 }
+    100.times { s.step_bodies }
+    assert_equal 40.0, hero[:y]
+
+    s.despawn plank
+    10.times { s.step_bodies }
+    assert hero[:y] < 40.0, 'the floor went away with its entity'
+  end
+
+  test 'a solid that grows by tweening h grows its collision too' do
+    s = Console::EntityStore.new
+    plank = s.spawn :plank, x: 0, y: 0, w: 200, h: 10, solid: true
+    hero = s.spawn :hero, x: 50, y: 100, w: 16, h: 16, body: { gravity: 1.0 }
+    100.times { s.step_bodies }
+    assert_equal 10.0, hero[:y]
+    plank[:h] = 30
+    s.step_bodies
+    assert_equal 30.0, hero[:y]
+  end
+
+  test 'one_way solid entities are pass-through platforms' do
+    s = Console::EntityStore.new
+    s.spawn :ledge, x: 0, y: 60, w: 200, h: 8, solid: true, one_way: true
+    hero = s.spawn :hero, x: 50, y: 10, w: 16, h: 16, body: { gravity: 0.0 }
+    hero[:body].vy = 8.0
+    20.times { s.step_bodies }
+    assert hero[:y] > 68.0, "blocked from below at y=#{hero[:y]}"
+  end
+
+  test 'dead and unflagged entities are not collision' do
+    s = Console::EntityStore.new
+    s.spawn :ghost, x: 0, y: 0, w: 200, h: 40, solid: true, dead: true
+    s.spawn :decor, x: 0, y: 0, w: 200, h: 40
+    assert_equal 0, s.solids.size
+  end
+
+  test 'a solid body does not collide with itself' do
+    s = store_with_floor
+    crate = s.spawn :crate, x: 50, y: 100, w: 16, h: 16,
+                            solid: true, body: { gravity: 1.0 }
+    100.times { s.step_bodies }
+    assert_equal 16.0, crate[:y]
+  end
+
+  test 'bodies stand on solid bodies' do
+    s = store_with_floor
+    s.spawn :crate, x: 50, y: 16, w: 16, h: 16, solid: true, body: { gravity: 1.0 }
+    hero = s.spawn :hero, x: 50, y: 100, w: 16, h: 16, body: { gravity: 1.0 }
+    100.times { s.step_bodies }
+    assert_equal 32.0, hero[:y]
+  end
+
+  test 'despawning an entity stops its body' do
+    s = store_with_floor
+    e = s.spawn :hero, x: 50, y: 100, body: true
+    assert_equal 1, s.step_bodies
+    s.despawn e
+    assert_equal 0, s.step_bodies
+    assert_equal 0, s.bodies.size
+  end
+
+  test 'world solids survive clear' do
+    s = store_with_floor
+    s.spawn :hero, body: true
+    s.clear
+    assert_equal 1, s.world_solids.size
+    assert_equal 0, s.bodies.size
+  end
+
+  test 'moving the entity moves the body' do
+    # A tween, a respawn or `hero[:x] = ...` all write the entity. The body
+    # must adopt that, not snap it back to where it was last frame.
+    s = store_with_floor
+    e = s.spawn :hero, x: 50, y: 16, w: 16, h: 16, body: { gravity: 1.0 }
+    s.step_bodies
+    e[:x] = 120
+    s.step_bodies
+    assert_equal 120.0, e[:body].x
+    assert_equal 120.0, e[:x]
+  end
+
+  test 'setting body x writes through to the entity' do
+    entity = { x: 0, y: 0, w: 16, h: 16 }
+    b = Console::Body.new(entity: entity, gravity: 0.0)
+    b.x = 64
+    b.y = 32
+    assert_equal 64.0, entity[:x]
+    assert_equal 32.0, entity[:y]
+    b.update []
+    assert_equal 64.0, b.x
+  end
+
+  test 'an attached body inspects without walking the cycle' do
+    s = store_with_floor
+    e = s.spawn :hero, body: true
+    assert e[:body].inspect.start_with?('#<Console::Body')
+    assert_not_nil e.inspect
+  end
+
+  test 'spawn_level makes the map solids the world solids' do
+    m = Console::Map.load MapSuite::FIXTURE
+    api = Object.new
+    api.extend Console::API
+    saved = Console.entities.world_solids
+    created = api.spawn_level m
+    begin
+      assert Console.entities.world_solids.equal?(m.solids)
+      assert_equal m.solids.size, api.world_solids.size
+    ensure
+      created.each { |e| Console.entities.despawn e }
+      Console.entities.world_solids = saved
+    end
   end
 end

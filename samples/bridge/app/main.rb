@@ -62,18 +62,18 @@ class Bridge
       d[:raised] = 0
       d[:won]    = false
 
-      @planks = []
+      # The ledges are level geometry; corpses join the collision as solid
+      # entities when they are raised, and leave it when they are despawned.
+      world_solids [@left, @right]
 
-      @hero = spawn :hero, kind: :hero, x: 110, y: 320, w: 20, h: 28, sprite: :hero
-      @body = Console::Body.new(entity: @hero,
-                                gravity: Bridge::GRAVITY,
-                                step_height: 8)
+      @hero = spawn :hero, kind: :hero, x: 110, y: 320, w: 20, h: 28, sprite: :hero,
+                           body: { gravity: Bridge::GRAVITY, step_height: 8 }
+      @body = @hero[:body]
     end
 
     def update
       run
       raise_dead
-      advance
       topple
       cull
       finish
@@ -92,15 +92,14 @@ class Bridge
 
     private
 
-    # Everything the body can stand on. A corpse IS a solid rect -- Console::Body
-    # only reads x/y/w/h/one_way, so the extra keys on the plank hashes are
-    # ignored and the array can be handed straight to update().
-    def solids
-      [@left, @right] + @planks
-    end
-
+    # The body is stepped by the console before update, so this only sets
+    # intent for the next frame.
     def run
       @body.vx = input.axis_x * Bridge::SPEED
+    end
+
+    def standing_planks
+      entities_of(:plank).select { |p| p[:solid] }
     end
 
     def raise_dead
@@ -114,22 +113,16 @@ class Bridge
       return if x < @pit_l || x > @pit_r
 
       # One corpse per spot -- no stacking into a pillar.
-      return if @planks.any? { |p| (p[:x] + (p[:w] / 2.0) - x).abs < Bridge::PIT_W }
+      return if standing_planks.any? { |p| (p[:x] + (p[:w] / 2.0) - x).abs < Bridge::PIT_W }
 
+      # The corpse IS the collision: a solid entity, so tweening its h grows
+      # the sprite and the rect the hero stands on together.
       e = spawn :soul, kind: :plank,
                 x: x - (Bridge::PIT_W / 2.0), y: 0,
                 w: Bridge::PIT_W, h: 0,
-                sprite: :soul, alpha: 255
+                sprite: :soul, alpha: 255,
+                solid: true, t: Bridge::TOPPLE
 
-      # The COLLISION rect and the SPRITE grow together. Tweening only the
-      # entity would give a corpse full-height collision for the whole rise,
-      # so it would catch the player while still invisible.
-      p = { x: x - (Bridge::PIT_W / 2.0), y: 0,
-            w: Bridge::PIT_W, h: 0,
-            t: Bridge::TOPPLE, e: e }
-      @planks << p
-
-      tween p, :h, to: Bridge::PIT_H, in: Bridge::RISE, ease: :out
       tween e, :h, to: Bridge::PIT_H, in: Bridge::RISE, ease: :out
 
       scene_data[:raised] += 1
@@ -138,22 +131,17 @@ class Bridge
       dust x, 0
     end
 
-    def advance
-      @body.update(solids)
-    end
-
     def topple
-      gone = []
-      @planks.each do |p|
+      standing_planks.each do |p|
         p[:t] -= 1
-        gone << p if p[:t] <= 0
-      end
+        next if p[:t] > 0
 
-      gone.each do |p|
-        @planks.delete p
-        tween p[:e], :alpha, to: 0, in: 14, ease: :in
-        tween p[:e], :y, to: -Bridge::PIT_H, in: 14, ease: :in
-        after 14 { despawn p[:e] }
+        # No longer solid the moment it starts to fall, so the hero drops
+        # rather than riding the toppling corpse down.
+        p[:solid] = false
+        tween p, :alpha, to: 0, in: 14, ease: :in
+        tween p, :y, to: -Bridge::PIT_H, in: 14, ease: :in
+        after 14 { despawn p }
         camera.shake 6, 12
         sfx :hit
       end

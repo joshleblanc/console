@@ -5,17 +5,21 @@
 # do not need one -- a platformer needs gravity, a floor and a wall, and that
 # is a state machine rather than a simulation.
 #
-#   body = Console::Body.new x: 64, y: 400, w: 16, h: 24, gravity: 0.4
+# Usually a body is attached to an entity and the console steps it for you,
+# every frame, against the world's solids (see EntityStore#step_bodies):
+#
+#   @hero = spawn :hero, x: 64, y: 400, w: 16, h: 24, body: { gravity: 0.4 }
 #
 #   def update
-#     body.vx = input.axis_x * 4
-#     body.jump 12 if input.pressed?(:accept) && body.grounded?
-#     body.update map.solids          # applies gravity itself
+#     @hero.body.vx = input.axis_x * 4
+#     @hero.body.jump 12 if input.pressed?(:accept) && @hero.body.grounded?
 #   end
 #
-#   def render
-#     draw_entity body.entity
-#   end
+# A free-standing body is stepped by hand instead:
+#
+#   body = Console::Body.new x: 64, y: 400, w: 16, h: 24, gravity: 0.4
+#   body.update map.solids          # applies gravity itself
+#   draw_entity body.entity
 #
 # Two decisions in here are what separate a body that feels solid from one that
 # does not, and both are about NOT taking the obvious path.
@@ -46,7 +50,8 @@ module Console
     # on a floor from re-reporting a landing every frame.
     SKIN = 0.01
 
-    attr_accessor :x, :y, :w, :h
+    attr_reader :x, :y
+    attr_accessor :w, :h
     attr_accessor :vx, :vy, :gravity, :max_fall, :step_height
     attr_accessor :friction, :entity
     attr_reader :grounded, :wall, :ceiling, :wall_dir, :on_floor, :on_roof
@@ -88,8 +93,30 @@ module Console
       @solids = []
     end
 
+    # Position setters write through to a bound entity, so teleporting the body
+    # and teleporting its entity are the same thing.
+    def x=(value)
+      @x = value.to_f
+      @entity[:x] = @x if @entity
+    end
+
+    def y=(value)
+      @y = value.to_f
+      @entity[:y] = @y if @entity
+    end
+
     def rect
       { x: @x, y: @y, w: @w, h: @h }
+    end
+
+    # Short on purpose: an attached body and its entity point at each other,
+    # and the default inspect would walk that cycle.
+    def inspect
+      "#<Console::Body x=#{@x} y=#{@y} vx=#{@vx} vy=#{@vy} grounded=#{@grounded}>"
+    end
+
+    def to_s
+      inspect
     end
 
     def entity
@@ -153,6 +180,14 @@ module Console
     # are left to the cart.
     def update(solids = nil)
       @solids = solids || []
+
+      # The entity may have been moved since the last frame (a tween, a
+      # respawn, `hero[:x] = ...`); adopt that position rather than snapping
+      # it back. w/h are not read: a body's hitbox may differ from its sprite.
+      if @entity
+        @x = @entity[:x].to_f if @entity[:x]
+        @y = @entity[:y].to_f if @entity[:y]
+      end
 
       # Snapshot before the move so `landed?` can be edge-triggered.
       @was_grounded = @grounded

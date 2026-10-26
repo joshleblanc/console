@@ -14,6 +14,12 @@
 #
 # `kind` is the tag used for querying, animation lookup (sprites/<kind>/<state>)
 # and collision groups.
+#
+# Two attributes plug an entity into platformer physics with no extra
+# bookkeeping -- despawning the entity removes either:
+#
+#   spawn :hero,  x: 64, y: 200, body: { gravity: 0.4 }  # stepped every frame
+#   spawn :plank, x: 96, y: 0, w: 28, h: 40, solid: true # bodies collide with it
 module Console
   class EntityStore
     attr_reader :entities
@@ -23,6 +29,7 @@ module Console
       @entities = []
       @by_id = {}
       @next_id = 1
+      @world_solids = []
     end
 
     def size
@@ -55,6 +62,16 @@ module Console
       e[:y] ||= 0.0
       e[:w] ||= 16
       e[:h] ||= 16
+
+      # `body:` (a Hash of Body options, or true) attaches a body the console
+      # steps every frame. It is resolved after the merge so a class's
+      # `defaults` can declare one too.
+      spec = e[:body]
+      if spec.is_a?(Body)
+        spec.entity = e
+      elsif spec
+        attach_body e, spec.is_a?(Hash) ? spec : {}
+      end
 
       @entities << e
       @by_id[e[:id]] = e
@@ -117,6 +134,57 @@ module Console
 
     def each_with_kind(kind, &block)
       each kind, &block
+    end
+
+    # --- bodies and solids ---------------------------------------------
+
+    # Static level geometry every attached body collides with, on top of the
+    # entities marked `solid: true`. `spawn_level` sets this to the map's
+    # solids; it survives `clear`, because a level outlives its entities.
+    attr_reader :world_solids
+
+    def world_solids=(list)
+      @world_solids = list || []
+    end
+
+    # Give an existing entity (one spawned by a map, say) a body the console
+    # steps every frame. Returns the Body, also reachable as entity[:body].
+    def attach_body(entity, options = {})
+      entity[:body] = Body.new(options.merge(entity: entity))
+    end
+
+    # Everything a body collides with: the world solids plus every live entity
+    # with a truthy `solid:` (`one_way: true` makes it a pass-through platform).
+    # Solid entities are read fresh each frame, so tweening one's h grows its
+    # collision with its sprite, and despawning it removes both.
+    def solids
+      out = @world_solids.dup
+      @entities.each { |e| out << e if e[:solid] && !e[:dead] }
+      out
+    end
+
+    # The Body of every entity that has one.
+    def bodies
+      out = []
+      @entities.each { |e| out << e[:body] if e[:body].is_a?(Body) }
+      out
+    end
+
+    # Advance every attached body one frame. Console.tick calls this once per
+    # frame (frozen under a pausing overlay), so carts never call it.
+    #
+    # A body that is itself solid (a crate other bodies stand on) never
+    # collides with its own entity. Returns the number of bodies stepped.
+    def step_bodies
+      movers = @entities.select { |e| e[:body].is_a?(Body) }
+      return 0 if movers.empty?
+
+      all = solids
+      movers.each do |e|
+        list = e[:solid] ? all.reject { |s| s.equal?(e) } : all
+        e[:body].update list
+      end
+      movers.size
     end
 
     # --- queries ---------------------------------------------------------

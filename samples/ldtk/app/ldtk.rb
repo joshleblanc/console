@@ -27,17 +27,16 @@ class Ldtk
     return unless @map
 
     # Entities become console entities by name: 'Enemy' -> :enemy, carrying
-    # its LDTK fields as attributes.
+    # its LDTK fields as attributes. spawn_level also hands the map's solids
+    # to the console, so the body below collides with them on its own.
     @spawned = spawn_level @map
     @ship = spawn :ship,
                   kind: :hero,
                   x: 32, y: 120,
                   w: 16, h: 16,
-                  sprite: :hero
-
-    # One option hash: mruby would otherwise bind a trailing key: value list
-    # to the first positional argument.
-    @body = body entity: @ship, gravity: GRAVITY, max_fall: 8.0
+                  sprite: :hero,
+                  body: { gravity: GRAVITY, max_fall: 8.0 }
+    @body = @ship[:body]
 
     debug "ldtk: #{@spawned.size} entities, #{@map.solids.size} solids"
   end
@@ -45,9 +44,9 @@ class Ldtk
   def update
     return unless @body
 
+    # The console steps the body before update; only intent is set here.
     @body.vx = input.axis_x * SPEED
     @body.jump JUMP if input.pressed?(:accept) && @body.grounded?
-    @body.update @map.solids
 
     # A one-line use of an LDTK Int field: it arrived as a real Integer.
     each_entity(:enemy) do |e|

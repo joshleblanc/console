@@ -636,7 +636,7 @@ push_scene :toast, pause: false, transparent: true # world keeps playing under i
 
 | option | default | meaning |
 |---|---|---|
-| `pause:` | `true` | freeze the scenes underneath and the console's timers, tweens and animations. `false` keeps them updating (and reading input) under the overlay |
+| `pause:` | `true` | freeze the scenes underneath and the console's timers, tweens, animations and bodies. `false` keeps them updating (and reading input) under the overlay |
 | `transparent:` | `false` | render the scenes underneath first, so the overlay draws on top of them instead of on a blank screen |
 | `dim:` | `0` | alpha (0-255) of a black wash between the scenes underneath and a transparent overlay |
 
@@ -781,7 +781,14 @@ despawn_if { |e| e[:y] > 900 }
 entity_count(:enemy)
 
 draw_entity e            # resolves animation, tint, alpha, flips
+
+spawn :hero, x: 64, y: 200, body: { gravity: 0.4 }   # physics, stepped for you
+spawn :crate, x: 96, y: 0, solid: true               # bodies collide with it
 ```
+
+`body:` and `solid:` plug an entity into [Bodies](#bodies) with no second
+collection to keep in sync: despawning the entity removes its body or its
+collision too.
 
 ### Assets
 
@@ -882,13 +889,12 @@ export and it spawns the entities and hands you the collision rects:
 
 ```ruby
 map = load_map 'maps/Level_0.ldtk'
-spawn_level map                       # every entity, by kind
-body = body entity: @ship, gravity: 0.4
+spawn_level map                       # every entity, by kind; map.solids become world solids
+attach_body @ship, gravity: 0.4       # the console steps it against them
 
 def update
-  body.vx = input.axis_x * 4
-  body.jump 9 if input.pressed?(:accept) && body.grounded?
-  body.update map.solids
+  @ship.body.vx = input.axis_x * 4
+  @ship.body.jump 9 if input.pressed?(:accept) && @ship.body.grounded?
 end
 ```
 
@@ -946,6 +952,38 @@ Two things this handles that a naive loader gets wrong:
 engine. There is no solver and no rigid bodies, because the games that want one
 need gravity, a floor and a wall, and that is a state machine.
 
+Attach a body to an entity and the console steps it every frame, against the
+world solids plus every entity spawned with `solid: true`:
+
+```ruby
+world_solids [floor, left_wall]      # static rects; spawn_level sets map.solids
+@hero = spawn :hero, x: 64, y: 400, w: 16, h: 24,
+              body: { gravity: 0.4 } # or body: true for the defaults
+spawn :plank, x: 120, y: 0, w: 28, h: 40, solid: true, one_way: true
+attach_body @ship, gravity: 0.4      # an entity that already exists
+
+def update
+  b = @hero.body                     # also @hero[:body]
+  b.vx = input.axis_x * 4
+  b.jump 12 if input.pressed?(:accept) && b.grounded?
+end
+```
+
+- Bodies move after tweens and animations and **before** `update`, so `update`
+  reads this frame's `grounded?` / `landed?`, and the `vx` or `jump` it sets
+  takes effect next frame. Like tweens, bodies freeze under a pausing overlay.
+- Solid entities are read fresh every frame: tween one's `h` and its collision
+  grows with its sprite; set `solid: false` or despawn it and it stops blocking.
+- A body moved from outside (a tween, `@hero[:x] = 0`, `b.x = 0`) keeps the
+  new position. The body's `w`/`h` default to the entity's but may be set
+  separately, for a hitbox smaller than the sprite.
+- A body that is also `solid:` is a crate other bodies can stand on; it never
+  collides with itself. A class's `defaults` may declare `body:` too.
+- `world_solids` survives `Console.entities.clear`, because level geometry
+  outlives entities; `spawn_level` replaces it.
+
+A free-standing body is stepped by hand instead:
+
 ```ruby
 b = body x: 64, y: 400, w: 16, h: 24, gravity: 0.4
 
@@ -962,11 +1000,16 @@ b.vx = input.axis_x * 4
 b.update map.solids
 ```
 
+The queries above work the same on an attached body. Don't also call `update`
+on one: the console already stepped it this frame.
+
 `gravity:` is a positive magnitude that pulls *down*, even though DragonRuby's
 bottom-left origin makes falling a negative `vy`.
 
-Solids are `{ x:, y:, w:, h: }` plus an optional `one_way:` flag, and they are
-static — moving platforms are left to the cart. A one-way solid only catches a
+Solids are `{ x:, y:, w:, h: }` plus an optional `one_way:` flag. A solid may
+move between frames, but a body standing on it is not carried along — riding a
+moving platform is left to the cart (`b.floor` names the solid underfoot). A
+one-way solid only catches a
 body falling onto it from above; it never blocks rising or sideways motion.
 
 Three details do the real work:

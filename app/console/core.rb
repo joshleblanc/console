@@ -17,7 +17,8 @@
 #
 #   1. input snapshot          so a whole frame sees one consistent input state
 #   2. timers / tickers / tweens
-#   3. animations advance, a following camera tracks its target
+#   3. animations advance, attached bodies move, a following camera tracks
+#      its target
 #      (2 and 3 are frozen while a pausing push_scene overlay is up)
 #   4. scene update + scene draw   (or, with no scenes, cart update)
 #   5. cart render (always last, so it is the place for a HUD)
@@ -163,6 +164,9 @@ module Console
     unless cart_uses_scenes? && scenes.paused?
       tweens.update
       anim.update
+      # Attached bodies move before the cart's update, so update reads this
+      # frame's grounded?/landed? and its vx/jump take effect next frame.
+      entities.step_bodies
       # A followed entity is tracked without the cart calling camera.update.
       camera.update if camera.following?
     end
@@ -710,23 +714,45 @@ module Console
     # is missing, so a bad level path is visible rather than a boot crash.
     #
     #   map = load_map 'maps/Level_0.ldtk'
-    #   map.spawn_all
-    #   @body = body entity: @ship, gravity: 0.4
+    #   spawn_level map
+    #   attach_body @ship, gravity: 0.4
     def load_map(path, options = {})
       Console::Map.load path, options
     end
 
-    # Spawn every entity from a loaded level into the entity store.
+    # Spawn every entity from a loaded level into the entity store, and make
+    # the level's solids the world solids attached bodies collide with.
     def spawn_level(map, extra = {})
+      Console.entities.world_solids = map.solids
       map.spawn_all extra
     end
 
     # --- bodies -----------------------------------------------------------
 
-    # A kinematic platformer body. Takes one options hash -- see the note on
+    # A free-standing kinematic platformer body, stepped by hand with
+    # `update(solids)`. Takes one options hash -- see the note on
     # Console::Body about why a positional list would not survive mruby.
+    #
+    # For a body the console steps for you, spawn with `body:` or use
+    # `attach_body`.
     def body(options = {})
       Console::Body.new options
+    end
+
+    # Attach a console-stepped body to an existing entity. Returns the Body.
+    #
+    #   attach_body @ship, gravity: 0.4
+    def attach_body(entity, options = {})
+      Console.entities.attach_body entity, options
+    end
+
+    # Static rects every attached body collides with (plus `solid: true`
+    # entities). Pass a list to replace them; `spawn_level` sets them for you.
+    #
+    #   world_solids [floor, left_wall, right_wall]
+    def world_solids(list = nil)
+      Console.entities.world_solids = list unless list.nil?
+      Console.entities.world_solids
     end
 
     # --- misc ------------------------------------------------------------
