@@ -259,6 +259,7 @@ new-cart.bat mygame                 scaffold a new cart
 publish-cart.bat --list             list publishable carts
 publish-cart.bat arcade             package arcade for windows-amd64
 publish-cart.bat arcade --dry-run   stage + verify, package nothing
+publish-cart.bat arcade --publish   package arcade and upload it to itch.io
 ```
 
 They expect the DragonRuby binaries in the parent directory, as on every other
@@ -280,10 +281,17 @@ only these four scripts differ. Two differences worth knowing:
   [`.gitattributes`](.gitattributes) pins `*.bat` to CRLF and the shell scripts
   to LF.
 
-> **The batch files have not been run.** They were written by hand and reviewed —
-> labels, calls and control flow checked statically — but never executed, because
-> the machine they were written on cannot run `cmd.exe`. Treat the first run of
-> each as a test run.
+> **The batch files were written by hand and reviewed, not executed.** They were
+> checked statically — labels, calls and control flow — on a machine that cannot
+> run `cmd.exe`. `publish-cart.bat` has since been run and fixed; the others
+> should still be treated as a first run.
+>
+> Batch has a few sharp edges the shell scripts do not, and the differences
+> are handled inside the `.bat` files so the commands behave the same on both:
+> arguments are split on `=` and `,` before a batch file ever sees them
+> (`--platforms=html5,linux-amd64` arrives as three arguments), `goto :eof`
+> does not carry an exit status, and `cmd`'s `copy` cannot follow a forward
+> slash in the source path.
 
 ---
 
@@ -380,6 +388,44 @@ publish-cart: ABORT 'arcade' uses assets it does not own:
 > `dragonruby-publish` resolves a relative game directory against the
 > DragonRuby root it ships in, and fails to read metadata from an absolute one.
 > The script handles this for you.
+
+---
+
+## Publishing to itch.io
+
+`publish-cart` packages by default. Add `--publish` and the engine uploads the
+result as well:
+
+```sh
+./bin/publish-cart trijam-395 --publish
+```
+
+That upload is DragonRuby's own, not a reimplementation. `dragonruby-publish`
+keeps its itch.io butler up to date, reads the itch.io username and project
+slug out of the staged metadata, tags the build with the version, and maps
+each platform to its itch.io channel (`html5`, `windows-amd64`, `linux-amd64`,
+`macos`, …). `publish-cart` only chooses whether to let it.
+
+**The itch project slug is the cart's name.** `publish-cart` sets `gameid` to
+the cart name, and the engine uses `gameid` as the project slug and `devid` as
+the username — so a cart called `trijam-395` publishes to
+`horizonshadow/triam-395`, and `devid` is already `horizonshadow` in the
+console's metadata. Create the page on itch.io first (for a jam entry, create
+it from the jam's own page so it links to the jam), with **Project URL** set to
+the cart name.
+
+To publish under a different slug or account, a cart can ship its own
+`metadata/itchio_metadata.txt`, which the staged build carries verbatim:
+
+```
+itchio.publish=true
+itchio.username=horizonshadow
+itchio.gameid=trijam-395
+```
+
+If you would rather upload by hand, `publish-cart` on its own leaves the
+builds in `../builds/`, which itch.io's web uploader will take. The html5
+build is the one to upload as "This file will be played in the browser".
 
 ---
 

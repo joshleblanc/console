@@ -4,6 +4,7 @@
 #   ./publish-cart arcade                  package arcade for linux-amd64
 #   ./publish-cart arcade --platforms=html5,linux-amd64
 #   ./publish-cart arcade --dry-run        stage + verify, do not package
+#   ./publish-cart arcade --publish        package it and upload it to itch.io
 #   ./publish-cart --list                  list carts and their publish titles
 #
 # dragonruby-publish packages a whole game directory, and this one holds every
@@ -140,11 +141,13 @@ cart_exists "$CART_SRC" || {
 }
 
 DRY_RUN=0
+PUBLISH=0
 PLATFORM_ARGS=""
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --platforms=*) PLATFORM_ARGS="$arg" ;;
+    --publish) PUBLISH=1 ;;
     --package|--package-with-remote-hotload|--only-package|"") ;;
     *) PLATFORM_ARGS="$PLATFORM_ARGS $arg" ;;
   esac
@@ -152,6 +155,19 @@ done
 
 # Default to the host's desktop build; --platforms= overrides it.
 [ -n "$PLATFORM_ARGS" ] || PLATFORM_ARGS="--platforms=linux-amd64"
+
+# --package tells dragonruby-publish to build the artifacts and stop there.
+# Without it the engine goes on to upload them, and that upload is the
+# engine's own: it uses the devid and gameid in the staged metadata as the
+# itch.io username and project slug, tags the build with the version, and
+# maps each platform to its itch.io channel.
+#
+# So the itch project slug is the cart's name: publish-cart sets gameid to
+# the cart name, which means the page to publish to is user/<cart name>.
+PUBLISH_ARGS="--package"
+if [ "$PUBLISH" -eq 1 ]; then
+  PUBLISH_ARGS=""
+fi
 
 # --- stage ----------------------------------------------------------------
 
@@ -410,7 +426,7 @@ REL_STAGE=$(printf '%s' "$STAGE" | sed "s|^$ROOT/||")
 echo "publish-cart: packaging '$CART' -> $ROOT/builds"
 cd "$ROOT"
 # shellcheck disable=SC2086
-"$DRAGONRUBY_PUBLISH" --only-package $PLATFORM_ARGS "$REL_STAGE"
+"$DRAGONRUBY_PUBLISH" $PUBLISH_ARGS $PLATFORM_ARGS "$REL_STAGE"
 
 echo ""
 echo "publish-cart: done. artifacts are in $ROOT/builds"
