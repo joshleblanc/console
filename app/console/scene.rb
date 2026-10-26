@@ -21,7 +21,8 @@
 #   scene :credits, { render: ->(_) { Console.draw.text 'thanks', x: 10, y: 10 } }
 #
 #   goto :play                 # replace the whole stack
-#   push :pause                # overlay, keeps :play underneath
+#   push :pause                # overlay, keeps :play underneath (paused)
+#   push :hud, pause: false, transparent: true   # :play keeps running + shows
 #   pop                        # back to :play
 #
 # Scene changes are committed at the END of the frame, so calling goto from
@@ -62,6 +63,9 @@ module Console
       @pending_push = false
       @pending_pop = false
       @pending_clear = false
+      @pending_opts = {}
+      # Overlay options per pushed scene name: { pause:, transparent:, dim: }.
+      @layers = {}
       @enter_hooks = {}
       @leave_hooks = {}
       @history = []
@@ -136,11 +140,19 @@ module Console
     end
 
     # Push a scene on top of the current one.
-    def push(name)
+    #
+    #   pause:       (true)  freeze the scenes underneath, and the console's
+    #                        timers/tweens. false keeps them updating.
+    #   transparent: (false) render the scenes underneath first, so this one
+    #                        draws over them.
+    #   dim:         (0)     alpha 0-255 of a black wash drawn between the
+    #                        scenes underneath and this one (transparent only).
+    def push(name, options = {})
       @pending = name.to_sym
       @pending_push = true
       @pending_pop = false
       @pending_clear = false
+      @pending_opts = options || {}
       name
     end
 
@@ -191,8 +203,23 @@ module Console
       commit if pending?
 
       if @current
-        dispatch :update, @current_instance
-        dispatch :render, @current_instance if draw_enabled
+        # Non-pausing overlays let the scenes beneath them keep updating, and
+        # transparent ones let them keep drawing. Both run bottom to top.
+        top = @stack.size - 1
+        (update_from..top).each do |i|
+          as_scene(@stack[i]) { |inst, d| dispatch :update, inst, d }
+        end
+        if draw_enabled
+          (draw_from..top).each do |i|
+            name = @stack[i]
+            dim = i > draw_from ? layer(name)[:dim].to_i : 0
+            if dim > 0
+              Console.draw.rect x: 0, y: 0, w: @args.grid.w, h: @args.grid.h,
+                                color: :black, alpha: dim
+            end
+            as_scene(name) { |inst, d| dispatch :render, inst, d }
+          end
+        end
       end
 
       # Anything requested during update is applied now, so the next frame
@@ -200,8 +227,10 @@ module Console
       commit if pending?
     end
 
-    # Draw the scenes underneath the top one, dimmed. Used by pause overlays.
-    def draw_below(draw_arg)
+    # Draw the scene underneath the top one, dimmed. For overlays that render
+    # the world themselves; `push_scene name, transparent: true` does this
+    # automatically (and handles deeper stacks).
+    def draw_below(draw_arg, alpha = 160)
       return if @stack.size < 2
       under = @stack[@stack.size - 2]
       d = @defs[under]
@@ -211,17 +240,45 @@ module Console
       # OVERLAY -- so a block-kind scene underneath would fail its
       # respond_to? check and silently not draw at all.
       dispatch :render, inst, d
+      return unless alpha.to_i > 0
       draw_arg.rect x: 0, y: 0, w: @args.grid.w, h: @args.grid.h,
-                     color: :black, alpha: 160
+                     color: :black, alpha: alpha
     end
 
-    # True when an overlay sits on top of the active scene. A push_scene overlay
-    # is a pause: the scene underneath stops updating, and the console freezes
-    # the schedulers to match. Without this, world logic driven by `after`,
-    # `every`, tweens or `animate` keeps running behind the overlay -- entities
-    # stop moving but keep dying, which is not a pause.
+    # True when an overlay sits on top of the active scene.
     def overlay?
       @stack.size > 1
+    end
+
+    # True when a pausing overlay is on the stack. The scenes beneath it stop
+    # updating, and the console freezes the schedulers to match. Without this,
+    # world logic driven by `after`, `every`, tweens or `animate` keeps running
+    # behind the overlay -- entities stop moving but keep dying, which is not a
+    # pause. `push_scene name, pause: false` overlays do not count.
+    def paused?
+      update_from > 0
+    end
+
+    # The overlay options a scene was pushed with (defaults for the bottom).
+    def layer(name)
+      o = @layers[name.to_sym] || {}
+      { pause: o.key?(:pause) ? o[:pause] : true,
+        transparent: o[:transparent] ? true : false,
+        dim: o[:dim] || 0 }
+    end
+
+    # Lowest stack index whose scene still updates this frame.
+    def update_from
+      i = @stack.size - 1
+      i -= 1 while i > 0 && !layer(@stack[i])[:pause]
+      i < 0 ? 0 : i
+    end
+
+    # Lowest stack index whose scene is drawn this frame.
+    def draw_from
+      i = @stack.size - 1
+      i -= 1 while i > 0 && layer(@stack[i])[:transparent]
+      i < 0 ? 0 : i
     end
 
     def dispatch(hook, inst, d = nil)
@@ -238,6 +295,25 @@ module Console
     end
 
     private
+
+    # Run a block as if `name` were the active scene, so `current_scene`,
+    # `scene_data` and friends resolve to it while a scene underneath an
+    # overlay updates or renders.
+    def as_scene(name)
+      d = @defs[name]
+      return unless d
+      inst = instance_of name
+      prev = @current
+      prev_inst = @current_instance
+      @current = name
+      @current_instance = inst
+      begin
+        yield inst, d
+      ensure
+        @current = prev
+        @current_instance = prev_inst
+      end
+    end
 
     def activate(name, resume = false)
       d = @defs[name]
@@ -299,6 +375,7 @@ module Console
         # Leave every overlay, top first, then resume the bottom scene.
         while @stack.size > 1
           top = @stack.pop
+          @layers.delete top
           leave top, instance_of(top)
         end
         @current = @stack.last
@@ -310,6 +387,7 @@ module Console
         @pending_pop = false
         return if @stack.size <= 1
         top = @stack.pop
+        @layers.delete top
         leave top
         @current = @stack.last
         # Resume, do not restart: re-activate the scene underneath WITHOUT
@@ -328,11 +406,13 @@ module Console
         @pending_push = false
         return if @stack.include?(name)
         @stack.push name
+        @layers[name] = @pending_opts
       else
         # `goto` replaces the stack: leave every scene on it, top first, so a
         # goto out of a pause overlay also runs the paused scene's `leave`.
         @stack.reverse.each { |n| leave n, instance_of(n) }
         @stack = [name]
+        @layers = {}
         # ...and drop every cached scene instance. `goto` is a hard restart,
         # so the destination must be entered fresh -- unlike pop, which resumes.
         @instances = {}

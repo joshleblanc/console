@@ -610,7 +610,7 @@ inside its scenes. Scene classes get it automatically when registered.
 ```ruby
 scene :play, PlayScene    # register a scene
 goto :play                # replace the stack
-push_scene :pause         # overlay, keep the scene underneath
+push_scene :pause         # overlay, keep the scene underneath (paused)
 pop_scene                 # back
 unwind                    # back to the first scene
 current_scene             # => :play
@@ -626,6 +626,22 @@ those hooks as lambdas). Scene changes are
 committed at the end of the frame, so calling `goto` from inside `update` never
 leaves the frame half-applied. `goto` and `unwind` run `leave` on every scene
 they remove, including one paused under an overlay.
+
+`push_scene` takes options for how the overlay sits over the scene beneath it:
+
+```ruby
+push_scene :pause, transparent: true, dim: 160     # paused, world shown dimmed
+push_scene :toast, pause: false, transparent: true # world keeps playing under it
+```
+
+| option | default | meaning |
+|---|---|---|
+| `pause:` | `true` | freeze the scenes underneath and the console's timers, tweens and animations. `false` keeps them updating (and reading input) under the overlay |
+| `transparent:` | `false` | render the scenes underneath first, so the overlay draws on top of them instead of on a blank screen |
+| `dim:` | `0` | alpha (0-255) of a black wash between the scenes underneath and a transparent overlay |
+
+Overlays stack: each scene is updated and drawn bottom to top, and
+`current_scene` / `scene_data` resolve to the scene whose hook is running.
 
 > The hook is `render`, **not** `draw`: `draw` is the console's rendering object
 > (`draw.rect`, `draw.sprite`). A scene that defined `draw` would shadow it.
@@ -979,9 +995,9 @@ every(60, immediate: true) { next_wave }
 Easings: `:linear :in :out :in_out :smooth :elastic :bounce`. `loops: n` replays
 the tween n times; add `yoyo: true` to alternate direction instead.
 
-Timers and tweens run on the console's own clock, which stops while a
+Timers and tweens run on the console's own clock, which stops while a pausing
 `push_scene` overlay is up: a pause freezes them rather than letting them
-fire the moment play resumes.
+fire the moment play resumes. A `pause: false` overlay leaves them running.
 
 ### Geometry
 

@@ -288,7 +288,7 @@ class Arcade
       ui.pips x: 20, top: 66, w: 140, value: d[:lives], max: 3,
               color: :good, h: 12
       if input.pressed?(:cancel)
-        push_scene :pause
+        push_scene :pause, transparent: true, dim: 160
       end
     end
   end
@@ -308,9 +308,8 @@ class Arcade
     end
 
     def render
-      # Re-draw the world underneath, dimmed, so the pause screen reads as an
-      # overlay rather than a separate place.
-      Console.scenes.draw_below Console.draw
+      # The world underneath is drawn (dimmed) by the console, because the
+      # scene was pushed with `transparent: true, dim: 160`.
       card = Console.ui.card w: 360, h: 220
       Console.draw.text 'PAUSED',
                         x: card[:x] + (card[:w] / 2.0),

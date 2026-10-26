@@ -162,7 +162,7 @@ module Console
   # The console's tween list plus its tick scheduler.
   #
   # Everything here runs on the host's own clock, which advances once per
-  # `update`. Console#tick skips `update` while a push_scene overlay is up, so
+  # `update`. Console#tick skips `update` while a pausing push_scene overlay is up, so
   # a pause really is a pause: an `after 300` set just before it still has its
   # remaining time afterwards, instead of firing the moment play resumes.
   class TweenHost

@@ -108,7 +108,7 @@ module Console
   # The per-console registry of animations.
   #
   # Animations run on the registry's own clock, which advances once per
-  # `update`. Console#tick skips `update` while a push_scene overlay is up, so
+  # `update`. Console#tick skips `update` while a pausing push_scene overlay is up, so
   # a paused scene's animations hold their frame instead of playing on (and
   # finishing) behind the pause.
   class Anim

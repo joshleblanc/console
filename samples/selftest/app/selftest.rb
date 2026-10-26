@@ -2372,6 +2372,87 @@ class SceneSuite
     assert_includes seen, :enter
     assert_includes seen, :update
   end
+
+  def overlay_over_one(ctrl, options)
+    setup_probe ctrl
+    ctrl.goto :one
+    ctrl.run false
+    under = ctrl.instance
+    ctrl.push :two, options
+    ctrl.run false
+    under.log.clear
+    ctrl.instance.log.clear
+    [under, ctrl.instance]
+  end
+
+  test 'a default push pauses and hides the scene underneath' do
+    ctrl = Console::SceneController.new $args
+    under, top = overlay_over_one ctrl, {}
+    ctrl.run true
+    assert ctrl.paused?
+    assert_equal 0, under.log.size
+    assert_includes top.log, :update
+    assert_includes top.log, :render
+  end
+
+  test 'a transparent push renders the paused scene underneath first' do
+    ctrl = Console::SceneController.new $args
+    under, top = overlay_over_one ctrl, { transparent: true }
+    ctrl.run true
+    assert ctrl.paused?
+    assert_equal [:render], under.log
+    assert_equal %i[update render], top.log
+  end
+
+  test 'a pause: false push keeps the scene underneath updating' do
+    ctrl = Console::SceneController.new $args
+    under, top = overlay_over_one ctrl, { pause: false }
+    ctrl.run true
+    refute ctrl.paused?
+    assert_equal [:update], under.log
+    assert_equal %i[update render], top.log
+  end
+
+  test 'dim draws a wash between the layers only when transparent' do
+    ctrl = Console::SceneController.new $args
+    overlay_over_one ctrl, { transparent: true, dim: 120 }
+    before = $args.outputs.sprites.size
+    ctrl.run true
+    # one rect from each probe render plus the wash
+    assert_equal before + 3, $args.outputs.sprites.size
+    opaque = Console::SceneController.new $args
+    overlay_over_one opaque, { dim: 120 }
+    before = $args.outputs.sprites.size
+    opaque.run true
+    assert_equal before + 1, $args.outputs.sprites.size
+  end
+
+  test 'scene_data resolves to the scene underneath while it runs' do
+    ctrl = Console::SceneController.new $args
+    seen = []
+    ctrl.define :base, { update: ->(_) { seen << ctrl.current_name } }
+    ctrl.define :over, { update: ->(_) { seen << ctrl.current_name } }
+    ctrl.goto :base
+    ctrl.run false
+    ctrl.push :over, { pause: false }
+    ctrl.run false
+    seen.clear
+    ctrl.run false
+    assert_equal %i[base over], seen
+    assert_equal :over, ctrl.current_name
+  end
+
+  test 'popping a non-pausing overlay restores the pause state' do
+    ctrl = Console::SceneController.new $args
+    overlay_over_one ctrl, { pause: false }
+    ctrl.pop
+    ctrl.run false
+    assert_equal 1, ctrl.depth
+    refute ctrl.paused?
+    ctrl.push :two
+    ctrl.run false
+    assert ctrl.paused?
+  end
 end
 
 class EntitySuite

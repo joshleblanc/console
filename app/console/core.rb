@@ -18,7 +18,7 @@
 #   1. input snapshot          so a whole frame sees one consistent input state
 #   2. timers / tickers / tweens
 #   3. animations advance, a following camera tracks its target
-#      (2 and 3 are frozen while a push_scene overlay is up)
+#      (2 and 3 are frozen while a pausing push_scene overlay is up)
 #   4. scene update + scene draw   (or, with no scenes, cart update)
 #   5. cart render (always last, so it is the place for a HUD)
 #   6. HUD / warnings
@@ -155,11 +155,12 @@ module Console
 
     # 2/3. scheduled work + animations.
     #
-    # Frozen while a push_scene overlay is up. `after`, `every` and tweens are
-    # global to the console rather than scoped to the scene that registered
-    # them, so without this gate a pause froze the scene's `update` but let
-    # timers keep firing -- enemies stopped moving and kept despawning.
-    unless cart_uses_scenes? && scenes.overlay?
+    # Frozen while a pausing push_scene overlay is up. `after`, `every` and
+    # tweens are global to the console rather than scoped to the scene that
+    # registered them, so without this gate a pause froze the scene's `update`
+    # but let timers keep firing -- enemies stopped moving and kept despawning.
+    # A `pause: false` overlay leaves them running.
+    unless cart_uses_scenes? && scenes.paused?
       tweens.update
       anim.update
       # A followed entity is tracked without the cart calling camera.update.
@@ -387,8 +388,11 @@ module Console
       Console.scenes.goto name
     end
 
-    def push_scene(name)
-      Console.scenes.push name
+    # push_scene :pause                                  paused, opaque
+    # push_scene :menu, transparent: true, dim: 160     paused, world visible
+    # push_scene :hud, pause: false, transparent: true  world keeps running
+    def push_scene(name, options = {})
+      Console.scenes.push name, options
     end
 
     def pop_scene
