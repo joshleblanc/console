@@ -26,7 +26,6 @@ class Arcade
 
   def setup
     # Generate anything the art folder does not have, so the cart always runs.
-    auto_sprite :spark, 8, 8, :accent2, :circle
     auto_sprite :enemy_block, 24, 24, :warn, :frame
     auto_sprite :tracer, 6, 14, :accent, :stripes
 
@@ -86,6 +85,7 @@ class Arcade
     def enter
       Console.entities.clear
       Console.tweens.clear
+      Console.particles.clear
       Console.anim.stop_all
       Console.camera.follow nil
       Console.camera.bounds = nil
@@ -131,6 +131,7 @@ class Arcade
         each_entity do |e|
           draw_entity e
         end
+        draw_particles
         draw_walls
       end
 
@@ -221,14 +222,13 @@ class Arcade
         despawn b
         hit[:hp] -= 1
         sfx :hit
-        camera.shake 4, 8
-        burst hit[:x], hit[:y], :warn, 6
+        burst x: hit[:x], y: hit[:y], count: 8, gravity: 0, shake: [4, 8]
         if hit[:hp] <= 0
           despawn hit
           stop_anim hit
           scene_data[:score] += 10
           sfx :explode
-          burst hit[:x], hit[:y], :accent2, 14
+          burst :explosion, x: hit[:x], y: hit[:y]
         end
       end
 
@@ -251,20 +251,10 @@ class Arcade
       end
     end
 
-    def burst(x, y, color, count)
-      count.times do
-        spawn :spark, kind: :spark,
-                      x: x, y: y, w: 8, h: 8, sprite: :spark,
-                      vx: rand_between(-3, 3), vy: rand_between(-3, 3),
-                      tint: color, life: 30
-      end
-    end
-
     def cull
       despawn_if do |e|
-        (e[:kind] == :spark && (e[:life] -= 1) <= 0) ||
-          (e[:kind] != :hero && (e[:x] < -60 || e[:x] > WORLD[:w] + 60 ||
-                                    e[:y] < -60 || e[:y] > WORLD[:h] + 60))
+        e[:kind] != :hero && (e[:x] < -60 || e[:x] > WORLD[:w] + 60 ||
+                              e[:y] < -60 || e[:y] > WORLD[:h] + 60)
       end
     end
 

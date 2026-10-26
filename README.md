@@ -882,6 +882,40 @@ centres a world smaller than the screen. `camera.visible_rect` is the world
 rect on screen, and the camera can be tweened like a hash
 (`tween camera, :zoom, to: 2.0, in: 20`).
 
+### Particles
+
+```ruby
+burst x: 100, y: 200                     # a shower of sparks
+burst x: 100, y: 200, shake: 6           # ...with camera.shake 6
+burst x: 100, y: 200, shake: [10, 16]    # ...with camera.shake 10, 16
+burst x: 100, y: 200, color: :bad, count: 40, speed: 6, gravity: 0
+burst :explosion, x: 100, y: 200         # a preset
+burst :smoke, x: 100, y: 200, count: 4   # a preset, overridden
+
+camera.apply do
+  each_entity { |e| draw_entity e }
+  draw_particles                         # not drawn unless you ask
+end
+```
+
+Options and defaults: `count: 24`, `color: :warn`, `speed: 4`, `life: 30`
+(ticks), `size: 3`, `gravity: 0.15`, `drag: 0.96`, `angle: 90` (degrees, up),
+`spread: 360` (a narrower spread aims the burst), `grow: 0` (pixels per tick)
+and `alpha: 255` (the starting alpha). `color:` may also be a list, such as
+`%i[warn bad]`, picked per particle. Speed and life vary per particle; each
+fades out as it dies. Particles step with the tweens, so they freeze under a
+pausing overlay; `Console.particles.clear` drops them all.
+
+| Preset | Looks like |
+|---|---|
+| `:sparks` | the defaults: a falling shower |
+| `:explosion` | a big multicolour blast, with `camera.shake 8, 14` built in (`shake: nil` turns it off) |
+| `:smoke` | slow grey puffs that rise and grow |
+| `:dust` | a small low puff, for landings and footsteps |
+
+A cart can add its own:
+`Console::Particles::PRESETS[:confetti] = { color: %i[good bad accent], gravity: 0.05 }`.
+
 ### Levels (LDTK)
 
 [LDTK](https://ldtk.io) is supported natively. Point the console at an `.ldtk`

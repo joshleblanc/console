@@ -44,7 +44,6 @@ class Volley
     auto_sprite :target_core,  40, 40, :bad,  :circle
 
     auto_sprite :bloom_ring, 64, 64, :good,   :ring
-    auto_sprite :spark,      7,  7,  :warn,  :circle
     auto_sprite :grave,      16, 14, :panel, :frame
 
     scene :play, PlayScene
@@ -55,6 +54,7 @@ class Volley
     def enter
       Console.entities.clear
       Console.tweens.clear
+      Console.particles.clear
       Console.anim.stop_all
       camera.follow nil
       camera.bounds = nil
@@ -109,7 +109,6 @@ class Volley
       escalate
       step_corpses
       step_targets
-      step_sparks
       step_blooms
     end
 
@@ -136,7 +135,7 @@ class Volley
           draw.sprite path: :target_core, x: e[:x], y: e[:y], w: 40, h: 40,
                       color: :bad, alpha: 190
         end
-        each_entity(:spark) { |e| draw_entity e }
+        draw_particles
         each_entity(:bloom) { |e| draw_entity e }
         draw_entity @hero
         draw_crosshair
@@ -367,14 +366,6 @@ class Volley
       end
     end
 
-    def step_sparks
-      each_entity(:spark) do |s|
-        move s, vx: s[:vx], vy: s[:vy]
-        s[:life] -= 1
-      end
-      despawn_if { |s| s[:kind] == :spark && s[:life] <= 0 }
-    end
-
     def step_blooms
       # Tweens drive these; they only need culling once their tween lands.
       despawn_if { |b| b[:kind] == :bloom && (b[:alpha] || 0) <= 0 }
@@ -415,11 +406,10 @@ class Volley
       tgt[:hp] -= amount
       cx = tgt[:x] + (tgt[:w] / 2.0)
       cy = tgt[:y] + (tgt[:h] / 2.0)
-      burst cx, cy, :good, 3 * amount
+      burst x: cx, y: cy, color: :good, count: 3 * amount, size: 5
 
       if tgt[:hp] <= 0
-        burst cx, cy, :warn, 18
-        camera.shake 6, 12
+        burst :explosion, x: cx, y: cy, shake: [6, 12]
         @targets.delete tgt
         despawn tgt
         scene_data[:kills] += 1
@@ -429,15 +419,6 @@ class Volley
       else
         camera.shake 2, 5
         sfx :hit
-      end
-    end
-
-    def burst(x, y, color, count)
-      count.times do
-        spawn :spark, kind: :spark,
-                     x: x, y: y, w: 7, h: 7, sprite: :spark,
-                     vx: rand_between(-3, 3), vy: rand_between(-3, 3),
-                     tint: color, life: 26
       end
     end
 
@@ -519,6 +500,6 @@ end
 #    sent homing entities AWAY from their lock; it is fixed, so new carts can
 #    use it.
 #
-# 4. EntityStore holds no velocity and no lifetime of its own; `move` is manual
-#    and life is decremented by hand (see step_sparks).
+# 4. EntityStore holds no velocity and no lifetime of its own; `move` is manual.
+#    Sparks are `burst` particles, which the console steps and expires itself.
 # ---------------------------------------------------------------------------

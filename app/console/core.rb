@@ -11,12 +11,13 @@
 #   audio     Console::Audio     sfx + music
 #   camera    Console::Camera    world/screen transform
 #   tweens    Console::TweenHost tweens, `after`, `every`
+#   particles Console::Particles `burst`, `draw_particles`
 #   scenes    Console::SceneController
 #
 # Frame order is fixed and worth knowing:
 #
 #   1. input snapshot          so a whole frame sees one consistent input state
-#   2. timers / tickers / tweens
+#   2. timers / tickers / tweens, particles
 #   3. animations advance, attached bodies move, a following camera tracks
 #      its target
 #      (2 and 3 are frozen while a pausing push_scene overlay is up)
@@ -32,7 +33,7 @@ module Console
 
   class << self
     attr_reader :args, :draw, :input, :ui, :entities, :anim, :audio
-    attr_reader :camera, :tweens, :scenes, :cart, :cart_name
+    attr_reader :camera, :tweens, :particles, :scenes, :cart, :cart_name
     attr_accessor :show_hud, :ui_store, :screen, :warnings, :test_mode
     attr_accessor :quit_after, :shot_path, :shot_at
     attr_reader :booted_at
@@ -69,6 +70,7 @@ module Console
 
     @entities = EntityStore.new
     @tweens = TweenHost.new
+    @particles = Particles.new
     @scenes = SceneController.new args
     @anim = Anim.new args
     @audio = Audio.new args
@@ -163,6 +165,7 @@ module Console
     # A `pause: false` overlay leaves them running.
     unless cart_uses_scenes? && scenes.paused?
       tweens.update
+      particles.update
       anim.update
       # Attached bodies move before the cart's update, so update reads this
       # frame's grounded?/landed? and its vx/jump take effect next frame.
@@ -606,6 +609,19 @@ module Console
 
     def next_tick(&block)
       Console.tweens.next_tick(&block)
+    end
+
+    # --- particles --------------------------------------------------------
+
+    # burst x: 100, y: 200, shake: 6 / burst :smoke, x: 100, y: 200
+    # See Console::Particles for options and presets.
+    def burst(preset = nil, options = {})
+      Console.particles.burst preset, options
+    end
+
+    # Draw live particles. Call inside camera.apply for world space.
+    def draw_particles
+      Console.particles.draw Console.draw
     end
 
     # --- audio -----------------------------------------------------------

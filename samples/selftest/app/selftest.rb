@@ -1543,7 +1543,7 @@ class RuntimeSuite
   end
 
   test 'every subsystem is present' do
-    %i[draw input ui entities anim audio camera tweens scenes].each do |m|
+    %i[draw input ui entities anim audio camera tweens particles scenes].each do |m|
       assert_not_nil Console.send(m), "#{m} should be wired up"
     end
   end
@@ -1655,7 +1655,7 @@ class RuntimeSuite
                   center overlaps? inside? percent strip row_at
                   ui_store camera background rand_between
                   asset assets_root shared_assets
-                  attach_body world_solids]
+                  attach_body world_solids burst draw_particles]
     missing = required.select { |m| !api.include?(m) }
     assert_equal 0, missing.size, "missing API methods: #{missing.join(', ')}"
   end
@@ -2579,6 +2579,77 @@ class CameraSuite
     cam[:zoom] = 1.5
     assert_equal 1.5, cam.zoom
     assert_equal 1.5, cam[:zoom]
+  end
+end
+
+class ParticleSuite
+  include Console::Test
+
+  test 'a burst emits, moves, and expires its particles' do
+    p = Console::Particles.new
+    p.burst x: 100, y: 100, count: 10, life: 4, gravity: 0, speed: 2
+    assert_equal 10, p.count
+    p.update
+    assert p.list.any? { |q| q[:x] != 100 || q[:y] != 100 }, 'particles should move'
+    5.times { p.update }
+    assert_equal 0, p.count
+  end
+
+  test 'gravity pulls particles down' do
+    p = Console::Particles.new
+    p.burst x: 0, y: 0, count: 1, speed: 0, gravity: 1, life: 10
+    3.times { p.update }
+    assert p.list[0][:y] < 0
+  end
+
+  test 'shake: shakes the camera' do
+    p = Console::Particles.new
+    p.burst x: 0, y: 0, count: 1, shake: [7, 5]
+    assert Console.camera.shaking?
+    assert_equal 7, Console.camera.shake_magnitude
+    Console.camera.shake 0, 0
+  end
+
+  test 'draw emits one sprite per particle' do
+    p = Console::Particles.new
+    p.burst x: 0, y: 0, count: 3
+    before = $args.outputs.sprites.size
+    p.draw Console.draw
+    assert_equal before + 3, $args.outputs.sprites.size
+  end
+
+  test 'a preset supplies defaults that options override' do
+    p = Console::Particles.new
+    p.burst :smoke, x: 5, y: 6, count: 2, shake: nil
+    assert_equal 2, p.count
+    assert_equal :muted, p.list[0][:color]
+    assert_equal 160, p.list[0][:alpha]
+    size = p.list[0][:size]
+    p.update
+    assert p.list[0][:size] > size, 'smoke should grow'
+    assert p.list[0][:y] > 6 || p.list[1][:y] > 6, 'smoke should rise'
+  end
+
+  test 'a color list is picked per particle' do
+    p = Console::Particles.new
+    p.burst :explosion, x: 0, y: 0, shake: nil
+    p.list.each { |q| assert_includes %i[warn accent2 bad], q[:color] }
+    p.burst x: 0, y: 0, count: 1, color: [1, 2, 3]
+    assert_equal [1, 2, 3], p.list.last[:color]
+  end
+
+  test 'the explosion preset shakes the camera' do
+    Console.camera.shake 0, 0
+    Console::Particles.new.burst :explosion, x: 0, y: 0
+    assert_equal 8, Console.camera.shake_magnitude
+    Console.camera.shake 0, 0
+  end
+
+  test 'an unknown preset falls back to sparks' do
+    p = Console::Particles.new
+    p.burst :nope, x: 0, y: 0
+    assert_equal 24, p.count
+    assert_equal :warn, p.list[0][:color]
   end
 end
 
