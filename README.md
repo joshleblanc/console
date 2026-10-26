@@ -858,7 +858,39 @@ mute
 ```
 
 Music is tracked under one key, so calling `music` again swaps the track instead
-of stacking loops. Unregistered sounds are skipped rather than crashing.
+of stacking loops. An unregistered sfx name plays the synth preset of the same
+name if there is one (below), and is otherwise skipped rather than crashing.
+
+#### Synthesized sound
+
+No sound files yet? `synth` builds retro sound effects from a waveform, so a
+cart is audible before it has any audio, the way `auto_sprite` makes it
+visible before it has art:
+
+```ruby
+synth :coin                                  # a preset
+synth :jump, pitch: 1.2, gain: 0.5           # with playback options
+synth :shoot, length: 0.3                    # a preset, overridden
+synth wave: :sine, freq: 440, to: 880, length: 0.2   # from scratch
+synth freq: [523, 659, 784]                  # notes played in turn
+sfx :hit                                     # no hit.wav? plays the :hit preset
+```
+
+Options and defaults: `wave: :square` (`:square :sine :saw :triangle :noise`),
+`freq: 440` (Hz, or a list of notes), `to:` (Hz to slide to), `length: 0.15`
+(seconds), `attack: 0.005` (seconds), `volume: 0.4` and `duty: 0.5` (square
+only). For `:noise`, `freq` is how often the noise changes, so lower is
+rumblier.
+
+Presets: `:blip :click :coin :jump :land :shoot :hit :hurt :explode :powerup
+:gameover`. A cart can add or alias its own:
+`Console::Synth::PRESETS[:zap] = { wave: :saw, freq: 2000, to: 100 }`.
+
+Each sound is computed once and cached, then played as a sample array (the
+engine's `input: [channels, rate, samples]` synthesis), so `mute` and
+`music_gain` apply as they do to sfx. Computing costs about 1ms per 20ms of
+sound, paid on first play; to avoid a hitch from a long sound, warm it in
+`setup` with `Console::Synth.samples(Console::Synth::PRESETS[:gameover])`.
 
 ### Camera
 

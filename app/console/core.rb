@@ -630,6 +630,11 @@ module Console
       Console.audio.sfx name, options
     end
 
+    # synth :coin / synth wave: :sine, freq: 440 -- see Console::Synth.
+    def synth(preset = nil, options = {})
+      Console.audio.synth preset, options
+    end
+
     def music(name, options = {})
       Console.audio.music name, options
     end

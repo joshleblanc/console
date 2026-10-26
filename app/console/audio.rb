@@ -6,6 +6,7 @@
 #
 #   sfx :jump
 #   sfx :hit, pitch: 0.8, gain: 0.6
+#   synth :coin                    # no file needed; see Console::Synth
 #   music :title
 #   music_gain 0.4
 #   stop_music
@@ -53,14 +54,16 @@ module Console
     end
 
     def resolve(name)
+      known(name) || begin
+        key = name.to_s
+        @missing << key unless @missing.include?(key)
+        nil
+      end
+    end
+
+    def known(name)
       key = name.to_s
-      @registry[key] ||
-        @registry["music_#{key}"] ||
-        @registry["sfx_#{key}"] ||
-        begin
-          @missing << key unless @missing.include?(key)
-          nil
-        end
+      @registry[key] || @registry["music_#{key}"] || @registry["sfx_#{key}"]
     end
 
     def missing_names
@@ -71,8 +74,10 @@ module Console
 
     # Play a one-shot. gain and pitch are floats (DragonRuby warns otherwise).
     # The master gain (set by music_gain) scales every sfx, given a gain or not.
+    # A name with no registered file but a Synth preset plays the preset.
     def sfx(name, options = {})
       return nil if @muted
+      return synth(name, options) if !known(name) && Synth::PRESETS[name.to_sym]
       path = resolve name
       return nil unless path
       prim = { path: path,
@@ -81,6 +86,33 @@ module Console
       prim[:pitch] = pitch.to_f if pitch
       @args.outputs.sounds << prim
       prim
+    end
+
+    # Play a synthesized one-shot: a Console::Synth preset and/or synth
+    # options, plus gain:/pitch: like sfx. Returns the args.audio entry.
+    def synth(preset = nil, options = {})
+      # mruby binds `synth freq: 440` to the first optional param.
+      if preset.is_a?(Hash)
+        options = preset
+        preset = nil
+      end
+      return nil if @muted
+      base = preset ? Synth::PRESETS[preset.to_sym] : {}
+      unless base
+        Console.warn "synth preset not found: #{preset}"
+        return nil
+      end
+      shape = base.merge options
+      shape.delete :gain
+      shape.delete :pitch
+      entry = { input: [1, Synth::RATE, Synth.samples(shape)],
+                gain: (options[:gain] || 1.0).to_f * @master_gain,
+                pitch: (options[:pitch] || 1.0).to_f }
+      # Finished one-shots leave args.audio on their own; rotating keys lets
+      # sounds overlap without growing the hash.
+      @synth_n = ((@synth_n || 0) + 1) % 16
+      @args.audio["console_synth_#{@synth_n}"] = entry
+      entry
     end
 
     # --- music ------------------------------------------------------------

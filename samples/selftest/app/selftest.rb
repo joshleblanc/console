@@ -1655,7 +1655,7 @@ class RuntimeSuite
                   center overlaps? inside? percent strip row_at
                   ui_store camera background rand_between
                   asset assets_root shared_assets
-                  attach_body world_solids burst draw_particles]
+                  attach_body world_solids burst draw_particles synth]
     missing = required.select { |m| !api.include?(m) }
     assert_equal 0, missing.size, "missing API methods: #{missing.join(', ')}"
   end
@@ -2741,6 +2741,61 @@ class AudioSuite
     assert_almost_equal 0.5, prim[:gain], 0.001
     prim = @audio.sfx :song, gain: 0.5
     assert_almost_equal 0.25, prim[:gain], 0.001
+  end
+
+  test 'synth samples have the right length and stay in range' do
+    s = Console::Synth.samples length: 0.1, volume: 0.5
+    assert_equal (0.1 * Console::Synth::RATE).to_i, s.size
+    assert s.all? { |v| v >= -0.5 && v <= 0.5 }
+    assert_almost_equal 0, s[0], 0.001
+    assert s.last.abs < 0.01, 'should fade out'
+    assert s.any? { |v| v.abs > 0.3 }, 'should be audible'
+  end
+
+  test 'every wave and preset synthesizes' do
+    %i[square sine saw triangle noise].each do |w|
+      s = Console::Synth.samples wave: w, length: 0.05
+      assert s.any? { |v| v.abs > 0.1 }, "#{w} is silent"
+    end
+    Console::Synth::PRESETS.each_value do |p|
+      assert Console::Synth.samples(p).size > 0
+    end
+  end
+
+  test 'synth samples are cached' do
+    a = Console::Synth.samples freq: 300, length: 0.05
+    assert a.equal?(Console::Synth.samples(freq: 300, length: 0.05))
+  end
+
+  test 'synth plays a sample array through args.audio' do
+    e = @audio.synth :coin, gain: 0.5, pitch: 2
+    assert_equal 1, e[:input][0]
+    assert_equal Console::Synth::RATE, e[:input][1]
+    assert e[:input][2].size > 0
+    assert_almost_equal 0.5, e[:gain], 0.001
+    assert_equal 2.0, e[:pitch]
+    assert @args.audio.values.include?(e)
+  end
+
+  test 'synth takes bare options and respects mute' do
+    assert_not_nil @audio.synth(wave: :sine, freq: 440)
+    @audio.instance_variable_set :@muted, true
+    assert_nil @audio.synth(:coin)
+  end
+
+  test 'an unknown synth preset plays nothing' do
+    assert_nil @audio.synth(:no_such_preset)
+    Console.warnings = Console.warnings.reject { |w| w[:text].include?('no_such_preset') }
+  end
+
+  test 'sfx falls back to a synth preset, but a registered file wins' do
+    e = @audio.sfx :coin
+    assert e[:input].is_a?(Array)
+    refute_includes @audio.missing_names, 'coin'
+    @audio.register :coin, 'sounds/coin.wav'
+    e = @audio.sfx :coin
+    assert e[:path].is_a?(String)
+    assert_nil @audio.sfx(:no_file_no_preset)
   end
 end
 
